@@ -47,13 +47,18 @@ cek_status() {
 }
 
 setup_bot() {
-    if ! dpkg -s nodejs >/dev/null 2>&1; then
-        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || echo -e "${red}Failed to download Node.js setup${neutral}"
-        apt-get install -y nodejs || echo -e "${red}Failed to install Node.js${neutral}"
-        npm install -g npm@latest
-    else
-        echo -e "${green}Node.js is already installed, skipping...${neutral}"
-    fi
+	NODE_VERSION=$(node -v 2>/dev/null | grep -oP '(?<=v)\d+' || echo "0")
+	rm /var/lib/dpkg/stato*
+	rm /var/lib/dpkg/lock*
+
+	if [ "$NODE_VERSION" -lt 22 ]; then
+		echo -e "${yellow}Installing or upgrading Node.js to version 22...${neutral}"
+		curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || echo -e "${red}Failed to download Node.js setup${neutral}"
+		apt-get install -y nodejs || echo -e "${red}Failed to install Node.js${neutral}"
+		npm install -g npm@latest
+	else
+		echo -e "${green}Node.js is already installed and up-to-date (v$NODE_VERSION), skipping...${neutral}"
+	fi
 
     if [ ! -f /root/Nebotsell/app.js ]; then
         git clone https://github.com/Diah082/Nebotsell /root/Nebotsell
