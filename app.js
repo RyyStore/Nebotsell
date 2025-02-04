@@ -195,20 +195,55 @@ bot.command('helpadmin', async (ctx) => {
 
 1. /addserver - Menambahkan server baru.
 2. /addsaldo - Menambahkan saldo ke akun pengguna.
-3. /editharga - Mengedit harga layanan.
-4. /editnama - Mengedit nama server.
-5. /editdomain - Mengedit domain server.
-6. /editauth - Mengedit auth server.
-7. /editlimitquota - Mengedit batas quota server.
-8. /editlimitip - Mengedit batas IP server.
-9. /editlimitcreate - Mengedit batas pembuatan akun server.
-10. /edittotalcreate - Mengedit total pembuatan akun server.
-11. /broadcast - Mengirim pesan siaran ke semua pengguna.
+3. /ceksaldo - Melihat saldo semua akun pengguna.
+4. /editharga - Mengedit harga layanan.
+5. /editnama - Mengedit nama server.
+6. /editdomain - Mengedit domain server.
+7. /editauth - Mengedit auth server.
+8. /editlimitquota - Mengedit batas quota server.
+9. /editlimitip - Mengedit batas IP server.
+10. /editlimitcreate - Mengedit batas pembuatan akun server.
+11. /edittotalcreate - Mengedit total pembuatan akun server.
+12. /broadcast - Mengirim pesan siaran ke semua pengguna.
 
 Gunakan perintah ini dengan format yang benar untuk menghindari kesalahan.
 `;
 
   ctx.reply(helpMessage, { parse_mode: 'Markdown' });
+});
+
+bot.command('ceksaldo', async (ctx) => {
+  try {
+    const adminId = ctx.from.id;
+    if (adminId != ADMIN) {
+      return await ctx.reply('❌ *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
+    }
+
+    const users = await new Promise((resolve, reject) => {
+      db.all('SELECT user_id, saldo FROM users', [], (err, rows) => {
+        if (err) {
+          console.error('❌ Kesalahan saat mengambil data saldo semua user:', err.message);
+          return reject('❌ *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
+        }
+        resolve(rows);
+      });
+    });
+
+    if (users.length === 0) {
+      return await ctx.reply('⚠️ *Belum ada pengguna yang memiliki saldo.*', { parse_mode: 'Markdown' });
+    }
+
+    let message = '📊 *Saldo Semua Pengguna:*\n\n';
+    users.forEach(user => {
+      message += `🆔 ID: ${user.user_id} | 💳 Saldo: Rp${user.saldo}\n`;
+    });
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error) {
+    console.error('❌ Kesalahan saat mengambil saldo semua user:', error);
+    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+  }
 });
 
 bot.command('broadcast', async (ctx) => {
@@ -2039,10 +2074,45 @@ bot.on('callback_query', async (ctx) => {
       case 'edit_total_create_akun':
         await handleEditTotalCreateAkun(ctx, userStateData, data);
         break;
+	  case 'cek_saldo_semua': // Tambahkan case baru untuk cek saldo semua
+        await handleCekSaldoSemua(ctx, userId);
+        break;
     }
   }
 });
 
+async function handleCekSaldoSemua(ctx, userId) {
+  if (userId != ADMIN) {
+    return await ctx.reply('❌ *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
+  }
+
+  try {
+    const users = await new Promise((resolve, reject) => {
+      db.all('SELECT user_id, saldo FROM users', [], (err, rows) => {
+        if (err) {
+          console.error('❌ Kesalahan saat mengambil data saldo semua user:', err.message);
+          return reject('❌ *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
+        }
+        resolve(rows);
+      });
+    });
+
+    if (users.length === 0) {
+      return await ctx.reply('⚠️ *Belum ada pengguna yang memiliki saldo.*', { parse_mode: 'Markdown' });
+    }
+
+    let message = '📊 *Saldo Semua Pengguna:*\n\n';
+    users.forEach(user => {
+      message += `🆔 ID: ${user.user_id} | 💳 Saldo: Rp${user.saldo}\n`;
+    });
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error) {
+    console.error('❌ Kesalahan saat mengambil saldo semua user:', error);
+    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+  }
+}
 
 async function handleDepositState(ctx, userId, data) {
   let currentAmount = global.depositState[userId].amount;
