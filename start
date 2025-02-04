@@ -106,11 +106,10 @@ server_app() {
 	while [ -z "$mcid" ]; do
 		read -p "Masukkan Merchant Code: " mcid
 		if [ -z "$mcid" ]; then
-			echo -e "${red}Merchant Code tidak boleh kosong.${neutral}"
 			while true; do
-				read -p "Merchant Code Kosong. Apakah Anda ingin mencoba lagi? (Y/N): " confirm
+				read -p "Merchant Code Kosong. Topup Otomatis tidak dapat dilakukan. Apakah Anda ingin melanjutkan? (Y/N): " confirm
 				if [[ "$confirm" =~ ^[Yy]$ ]]; then
-					break  # Kembali meminta input Merchant Code
+					break 2  # Langsung lanjut ke tahap berikutnya
 				elif [[ "$confirm" =~ ^[Nn]$ ]]; then
 					echo "Silakan masukkan Merchant Code lagi."
 					mcid=""  # Reset mcid agar loop utama meminta input ulang
@@ -125,11 +124,10 @@ server_app() {
 	while [ -z "$keypaydisini" ]; do
 		read -p "Masukkan API KEY: " keypaydisini
 		if [ -z "$keypaydisini" ]; then
-			echo -e "${red}API KEY tidak boleh kosong.${neutral}"
 			while true; do
-				read -p "API KEY Kosong. Apakah Anda ingin mencoba lagi? (Y/N): " confirm
+				read -p "API KEY Kosong. Topup Otomatis tidak dapat dilakukan. Apakah Anda ingin melanjutkan? (Y/N): " confirm
 				if [[ "$confirm" =~ ^[Yy]$ ]]; then
-					break  # Kembali meminta input API KEY
+					break 2  # Langsung lanjut ke tahap berikutnya
 				elif [[ "$confirm" =~ ^[Nn]$ ]]; then
 					echo "Silakan masukkan API KEY lagi."
 					keypaydisini=""  # Reset keypaydisini agar loop utama meminta input ulang
@@ -140,6 +138,7 @@ server_app() {
 			done
 		fi
 	done
+
 
     rm -f /root/Nebotsell/.vars.json
     echo "{
