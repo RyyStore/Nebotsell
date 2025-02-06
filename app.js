@@ -20,7 +20,9 @@ const BOT_TOKEN = vars.BOT_TOKEN;
 const port = vars.PORT || 50123;
 const ADMIN = vars.USER_ID; 
 const NAMA_STORE = vars.NAMA_STORE || '@NEWBIESTORE';
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN, {
+    handlerTimeout: 180_000 
+});
 const adminIds = ADMIN;
 console.log('Bot initialized');
 
@@ -281,6 +283,97 @@ bot.command('broadcast', async (ctx) => {
       ctx.reply('✅ Pesan siaran berhasil dikirim.', { parse_mode: 'Markdown' });
   });
 });
+
+global.broadcastMessages = {}; // Penyimpanan sementara pesan yang akan dikirim
+
+bot.command('send', async (ctx) => {
+    const userId = ctx.message.from.id;
+    if (!adminIds.includes(userId)) {
+        return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+    }
+
+    const args = ctx.message.text.split(' ').slice(0);
+    const message = ctx.message.reply_to_message ? ctx.message.reply_to_message.text : args.slice(1).join(' ');
+
+    if (!message) {
+        return ctx.reply('⚠️ Mohon berikan pesan untuk disiarkan.', { parse_mode: 'Markdown' });
+    }
+
+    if (args.length > 0 && !isNaN(args[0])) {
+        // Jika admin memasukkan user_id langsung
+        const targetUserId = args[0];
+        sendMessageToUser(targetUserId, message, ctx);
+    } else {
+        // Jika tidak ada user_id, tampilkan daftar user untuk dipilih
+        db.all("SELECT user_id FROM users", [], async (err, rows) => {
+            if (err) {
+                console.error('⚠️ Kesalahan saat mengambil daftar pengguna:', err.message);
+                return ctx.reply('⚠️ Kesalahan saat mengambil daftar pengguna.', { parse_mode: 'Markdown' });
+            }
+
+            if (rows.length === 0) {
+                return ctx.reply('⚠️ Tidak ada pengguna dalam database.', { parse_mode: 'Markdown' });
+            }
+
+            const buttons = [];
+            for (let i = 0; i < rows.length; i += 2) {
+                const row = [];
+
+                // Buat ID unik untuk pesan ini
+                const messageId = crypto.randomUUID();
+                global.broadcastMessages[messageId] = message;
+
+                const username1 = await getUsernameById(rows[i].user_id);
+                row.push({ text: username1, callback_data: `broadcast_${rows[i].user_id}_${messageId}` });
+
+                if (i + 1 < rows.length) {
+                    const messageId2 = crypto.randomUUID();
+                    global.broadcastMessages[messageId2] = message;
+
+                    const username2 = await getUsernameById(rows[i + 1].user_id);
+                    row.push({ text: username2, callback_data: `broadcast_${rows[i + 1].user_id}_${messageId2}` });
+                }
+
+                buttons.push(row);
+            }
+
+            ctx.reply('📢 Pilih pengguna untuk menerima Pesan:', {
+                reply_markup: { inline_keyboard: buttons }
+            });
+        });
+    }
+});
+
+bot.action(/^broadcast_(\d+)_(.+)$/, async (ctx) => {
+    const match = ctx.match;
+    if (!match) return;
+    const userId = match[1];
+    const messageId = match[2];
+
+    const message = global.broadcastMessages[messageId];
+    if (!message) {
+        return ctx.reply('⚠️ Pesan tidak ditemukan atau telah kadaluarsa.');
+    }
+
+    delete global.broadcastMessages[messageId]; // Hapus dari cache setelah digunakan
+    sendMessageToUser(userId, message, ctx);
+});
+
+async function sendMessageToUser(userId, message, ctx) {
+    try {
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: message
+        });
+        ctx.reply(`✅ Pesan berhasil dikirim ke ${userId}`);
+    } catch (error) {
+        console.error(`⚠️ Gagal mengirim pesan ke ${userId}:`, error.message);
+        ctx.reply(`⚠️ Gagal mengirim pesan ke ${userId}`);
+    }
+}
+
+
+
 bot.command('addsaldo', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
@@ -453,19 +546,29 @@ bot.command('editauth', async (ctx) => {
 
   const [domain, auth] = args.slice(1);
 
-  db.run("UPDATE Server SET auth = ? WHERE domain = ?", [auth, domain], function(err) {
+  // Periksa apakah domain ada dalam database
+  db.get("SELECT * FROM Server WHERE domain = ?", [domain], (err, row) => {
       if (err) {
-          console.error('⚠️ Kesalahan saat mengedit auth server:', err.message);
-          return ctx.reply('⚠️ Kesalahan saat mengedit auth server.', { parse_mode: 'Markdown' });
+          console.error('⚠️ Kesalahan saat mengambil data server:', err.message);
+          return ctx.reply('⚠️ Terjadi kesalahan saat mengambil data server.', { parse_mode: 'Markdown' });
       }
 
-      if (this.changes === 0) {
-          return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+      if (!row) {
+          return ctx.reply(`⚠️ Server dengan domain \`${domain}\` tidak ditemukan.`, { parse_mode: 'Markdown' });
       }
 
-      ctx.reply(`✅ Auth server \`${domain}\` berhasil diubah menjadi \`${auth}\`.`, { parse_mode: 'Markdown' });
+      // Update auth jika server ditemukan
+      db.run("UPDATE Server SET auth = ? WHERE domain = ?", [auth, domain], function(err) {
+          if (err) {
+              console.error('⚠️ Kesalahan saat mengedit auth server:', err.message);
+              return ctx.reply('⚠️ Kesalahan saat mengedit auth server.', { parse_mode: 'Markdown' });
+          }
+
+          ctx.reply(`✅ Auth server \`${domain}\` berhasil diubah menjadi \`${auth}\`.`, { parse_mode: 'Markdown' });
+      });
   });
 });
+
 
 bot.command('editlimitquota', async (ctx) => {
   const userId = ctx.message.from.id;
@@ -689,6 +792,7 @@ async function sendAdminMenu(ctx) {
     }
   }
 }
+
 
 bot.action('service_create', async (ctx) => {
   if (!ctx || !ctx.match) {
@@ -2343,7 +2447,7 @@ async function processDeposit(ctx, amount) {
   try {
     // Kirim QRIS Pembayaran dengan nominal unik
     await ctx.replyWithPhoto({ source: './qris.png' }, {
-      caption: `🌟 *Informasi Deposit Anda* 🌟\n\n💼 *Jumlah:* Rp ${uniqueAmount}\n⏳ *Mohon transfer dengan nominal yang tepat agar terdeteksi otomatis!*`,
+      caption: `🌟 *Informasi Deposit Anda* 🌟\n\n💼 *Jumlah:* Rp ${uniqueAmount}\n⏳ *Mohon transfer Sebelum 3 Menit dengan nominal yang tepat agar terdeteksi otomatis!*`,
       parse_mode: 'Markdown'
     });
 
@@ -2351,7 +2455,7 @@ async function processDeposit(ctx, amount) {
 
     // Tunggu pembayaran masuk selama 5 menit
     let pembayaranDiterima = false;
-    const timeout = Date.now() + 300000; // 5 menit
+    const timeout = Date.now() + 150000; // 5 menit
 
     while (Date.now() < timeout) {
       const transaksi = await cekMutasi(uniqueAmount);
@@ -2359,15 +2463,14 @@ async function processDeposit(ctx, amount) {
         console.log(`✅ Pembayaran diterima dari ${transaksi.buyer_reff} sebesar ${transaksi.amount}`);
 
         // Update saldo user setelah pembayaran diterima
-		const userDbId = await getUserIdFromTelegram(userId);
-			if (!userDbId) {
-				console.error(`❌ User ID tidak ditemukan dalam database untuk Telegram ID: ${userId}`);
-			return await ctx.reply('❌ *Akun Anda tidak ditemukan dalam sistem kami.*', { parse_mode: 'Markdown' });
-		}
+        const userDbId = await getUserIdFromTelegram(userId);
+        if (!userDbId) {
+          console.error(`❌ User ID tidak ditemukan dalam database untuk Telegram ID: ${userId}`);
+          return await ctx.reply('❌ *Akun Anda tidak ditemukan dalam sistem kami.*', { parse_mode: 'Markdown' });
+        }
 
-
-		await updateUserSaldo(userDbId, parseInt(transaksi.amount)); // Memperbarui saldo berdasarkan ID di database
-			console.log(` Pengguna Ke ${userDbId} Melakukan Deposit Sebesar *Rp${transaksi.amount}*`);
+        await updateUserSaldo(userDbId, parseInt(transaksi.amount)); // Memperbarui saldo berdasarkan ID di database
+        console.log(` Pengguna Ke ${userDbId} Melakukan Deposit Sebesar *Rp${transaksi.amount}*`);
 
         await ctx.reply(`✅ *Pembayaran berhasil!* Saldo Anda telah ditambahkan sebesar *Rp${transaksi.amount}*`, { parse_mode: 'Markdown' });
 
@@ -2380,21 +2483,26 @@ async function processDeposit(ctx, amount) {
 
     if (!pembayaranDiterima) {
       console.log(`❌ Pembayaran tidak ditemukan untuk User ${userId}`);
-      await ctx.reply('❌ *Kami tidak menemukan pembayaran dalam 5 menit terakhir.* Jika sudah membayar, harap hubungi admin.', { parse_mode: 'Markdown' });
-    }
 
+      // Kirim pesan ke pengguna bahwa pembayaran tidak ditemukan
+      await ctx.reply('❌ *Kami tidak menemukan pembayaran dalam 3 menit terakhir.* Jika sudah membayar, harap hubungi admin.', { parse_mode: 'Markdown' });
+    }
+      await new Promise(resolve => setTimeout(resolve, 2000));
   } catch (error) {
     console.error('❌ Kesalahan saat memproses top-up saldo:', error);
     await ctx.reply('❌ *Terjadi kesalahan saat memproses permintaan Anda.*', { parse_mode: 'Markdown' });
   } finally {
+    // Menghapus status deposit setelah proses selesai (baik gagal maupun berhasil)
     delete global.depositState[userId];
+      console.log('🔄 Restarting bot...');
+      process.exit(1); // Memicu restart oleh systemd
+    }
   }
-}
 
 
 
 // Fungsi untuk mengecek mutasi transaksi dari OkeConnect
-async function cekMutasi(expectedAmount, maxWaitTime = 300000, interval = 5000) {
+async function cekMutasi(expectedAmount, maxWaitTime = 140000, interval = 5000) {
   try {
     const startTime = Date.now(); // Catat waktu mulai
     const apiKey = vars.OKE_API_KEY;
