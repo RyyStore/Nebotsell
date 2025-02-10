@@ -54,23 +54,23 @@ async function createssh(username, password, exp, iplimit, serverId) {
 🔗 *Link dan Payload*
 ───────────────────────
 Payload      : 
-\`\`\`
+\`
 GET / HTTP/1.1
 Host: ${sshData.domain}
 Upgrade: websocket
-\`\`\`
+\`
 Format Account WS: 
-\`\`\`
+\`
 ${sshData.domain}:80@${sshData.username}:${sshData.password}
-\`\`\`
+\`
 Format Account TLS: 
-\`\`\`
+\`
 ${sshData.domain}:443@${sshData.username}:${sshData.password}
-\`\`\`
+\`
 Format Account UDP: 
-\`\`\`
+\`
 ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
-\`\`\`
+\`
 ───────────────────────
 ┌─────────────────────
 │ Expires: \`${sshData.expired}\`
@@ -135,21 +135,21 @@ async function createvmess(username, exp, quota, limitip, serverId) {
 │ *Path GRPC*: \`vmess-grpc\`
 └─────────────────────
 🔐 *URL VMESS TLS*
-\`\`\`
+\`
 ${vmessData.vmess_tls_link}
-\`\`\`
+\`
 🔓 *URL VMESS HTTP*
-\`\`\`
+\`
 ${vmessData.vmess_nontls_link}
-\`\`\`
+\`
 🔒 *URL VMESS GRPC*
-\`\`\`
+\`
 ${vmessData.vmess_grpc_link}
-\`\`\`
+\`
 🔒 *UUID*
-\`\`\`
+\`
 ${vmessData.uuid}
-\`\`\`
+\`
 ┌─────────────────────
 │ Expiry: \`${vmessData.expired}\`
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
@@ -214,21 +214,21 @@ async function createvless(username, exp, quota, limitip, serverId) {
 │ *Path GRPC*: \`vless-grpc\`
 └─────────────────────
 🔐 *URL VLESS TLS*
-\`\`\`
+\`
 ${vlessData.vless_tls_link}
-\`\`\`
+\`
 🔓 *URL VLESS HTTP*
-\`\`\`
+\`
 ${vlessData.vless_nontls_link}
-\`\`\`
+\`
 🔒 *URL VLESS GRPC*
-\`\`\`
+\`
 ${vlessData.vless_grpc_link}
-\`\`\`
+\`
 🔒 *UUID*
-\`\`\`
+\`
 ${vlessData.uuid}
-\`\`\`
+\`
 ┌─────────────────────
 │ Expiry: \`${vlessData.expired}\`
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
@@ -292,21 +292,21 @@ async function createtrojan(username, exp, quota, limitip, serverId) {
 │ *Path GRPC*: \`trojan-grpc\`
 └─────────────────────
 🔐 *URL TROJAN TLS*
-\`\`\`
+\`
 ${trojanData.trojan_tls_link}
-\`\`\`
+\`
 🔐 *URL TROJAN HTTP*
-\`\`\`
+\`
 ${trojanData.trojan_nontls_link1}
-\`\`\`
+\`
 🔒 *URL TROJAN GRPC*
-\`\`\`
+\`
 ${trojanData.trojan_grpc_link}
-\`\`\`
+\`
 🔒 *PASSWORD*
-\`\`\`
+\`
 ${trojanData.uuid}
-\`\`\`
+\`
 ┌─────────────────────
 │ Expiry: \`${trojanData.expired}\`
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
@@ -372,17 +372,17 @@ async function createshadowsocks(username, exp, quota, limitip, serverId) {
 │ *Path GRPC*: \`shadowsocks-grpc\`
 └─────────────────────
 🔐 *URL SHADOWSOCKS TLS*
-\`\`\`
+\`
 ${shadowsocksData.ss_link_ws}
-\`\`\`
+\`
 🔒 *URL SHADOWSOCKS GRPC*
-\`\`\`
+\`
 ${shadowsocksData.ss_link_grpc}
-\`\`\`
+\`
 🔒 *UUID*
-\`\`\`
+\`
 ${shadowsocksData.uuid}
-\`\`\`
+\`
 ┌─────────────────────
 │ Expiry: \`${shadowsocksData.expired}\`
 │ Quota: \`${shadowsocksData.quota === '0 GB' ? 'Unlimited' : shadowsocksData.quota}\`
