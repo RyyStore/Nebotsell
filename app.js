@@ -150,12 +150,19 @@ async function sendMainMenu(ctx) {
     console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
   }
 
-  const messageText = `*Selamat datang di ${NAMA_STORE},
-Powered by RYYSTORE 🚀
-Bot VPN serba otomatis untuk membeli
-layanan VPN dengan mudah dan cepat
+    const messageText = `* ${NAMA_STORE}
+ ───────────────────
+█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+█░░╦─╦╔╗╦─╔╗╔╗╔╦╗╔╗░░█
+█░░║║║╠─║─║─║║║║║╠─░░█
+█░░╚╩╝╚╝╚╝╚╝╚╝╩─╩╚╝░░█
+█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
+๑۞๑ POWERED BY @RyyStorevp1*
+ ───────────────────
+${NAMA_STORE} menyediakan
+layanan VPN dengan mudah dan praktis
 Nikmati kemudahan dan kecepatan
-dalam layanan VPN dengan bot kami!
+dalam layanan bot kami!
 
 ⏳ *Uptime bot:* ${days} Hari
 🌐 *Server tersedia:* ${jumlahServer}
