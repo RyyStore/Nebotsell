@@ -14,7 +14,7 @@
 <br>
 
 ### INSTALL BOT RESELLER 
-<pre><code>wget -q https://raw.githubusercontent.com/Diah082/Nebotsell/main/start && chmod +x start && ./start nebotsell
+<pre><code>wget -q https://raw.githubusercontent.com/RyyStore/Nebotsell/main/start && chmod +x start && ./start nebotsell
 </code></pre>
 
 ### TESTED ON OS 
