@@ -151,7 +151,7 @@ async function sendMainMenu(ctx) {
   }
 
   const messageText = `*Selamat datang di ${NAMA_STORE},
-Powered by NEWBIE* 🚀
+Powered by RYYSTORE 🚀
 Bot VPN serba otomatis untuk membeli
 layanan VPN dengan mudah dan cepat
 Nikmati kemudahan dan kecepatan
