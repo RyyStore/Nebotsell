@@ -28,7 +28,9 @@ async function createssh(username, password, exp, iplimit, serverId) {
           if (response.data.status === "success") {
             const sshData = response.data.data;
             const msg = `
-🌟 *AKUN SSH PREMIUM* 🌟
+   ──────────────────────
+   *STATUS CREATE SSH SUKSES* 
+   ──────────────────────
 
 🔹 *Informasi Akun*
 ┌─────────────────────
@@ -77,7 +79,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 │ IP Limit: \`${sshData.ip_limit}\`
 └─────────────────────
 
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih Telah Menggunakan layanan kami!✿
 `;
               console.log('SSH account created successfully');
               return resolve(msg);
@@ -120,8 +122,9 @@ async function createvmess(username, exp, quota, limitip, serverId) {
           if (response.data.status === "success") {
             const vmessData = response.data.data;
             const msg = `
-🌟 *AKUN VMESS PREMIUM* 🌟
-
+──────────────────────            
+  *CREATE VMESS SUCCESS* 
+──────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vmessData.username}\`
@@ -134,19 +137,22 @@ async function createvmess(username, exp, quota, limitip, serverId) {
 │ *Path*     : \`/vmess\`
 │ *Path GRPC*: \`vmess-grpc\`
 └─────────────────────
-🔐 *URL VMESS TLS*
+ *URL VMESS TLS*
 \`
 ${vmessData.vmess_tls_link}
 \`
-🔓 *URL VMESS HTTP*
+──────────────────────
+✿ *URL VMESS HTTP*
 \`
 ${vmessData.vmess_nontls_link}
 \`
-🔒 *URL VMESS GRPC*
+──────────────────────
+✿ *URL VMESS GRPC*
 \`
 ${vmessData.vmess_grpc_link}
 \`
-🔒 *UUID*
+──────────────────────
+✿ *UUID*
 \`
 ${vmessData.uuid}
 \`
@@ -156,7 +162,7 @@ ${vmessData.uuid}
 │ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VMess account created successfully');
               return resolve(msg);
@@ -199,7 +205,9 @@ async function createvless(username, exp, quota, limitip, serverId) {
           if (response.data.status === "success") {
             const vlessData = response.data.data;
             const msg = `
-🌟 *AKUN VLESS PREMIUM* 🌟
+──────────────────────            
+✿ *CREATE VLESS SUCCESS*✿
+──────────────────────
 
 🔹 *Informasi Akun*
 ┌─────────────────────
@@ -213,19 +221,22 @@ async function createvless(username, exp, quota, limitip, serverId) {
 │ *Path*     : \`/vless\`
 │ *Path GRPC*: \`vless-grpc\`
 └─────────────────────
-🔐 *URL VLESS TLS*
+✿ *URL VLESS TLS*
 \`
 ${vlessData.vless_tls_link}
 \`
-🔓 *URL VLESS HTTP*
+──────────────────────
+✿ *URL VLESS HTTP*
 \`
 ${vlessData.vless_nontls_link}
 \`
-🔒 *URL VLESS GRPC*
+──────────────────────
+✿ *URL VLESS GRPC*
 \`
 ${vlessData.vless_grpc_link}
 \`
-🔒 *UUID*
+──────────────────────
+✿ *UUID*
 \`
 ${vlessData.uuid}
 \`
@@ -235,7 +246,7 @@ ${vlessData.uuid}
 │ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VLESS account created successfully');
               return resolve(msg);
@@ -278,8 +289,9 @@ async function createtrojan(username, exp, quota, limitip, serverId) {
           if (response.data.status === "success") {
             const trojanData = response.data.data;
             const msg = `
-🌟 *AKUN TROJAN PREMIUM* 🌟
-
+──────────────────────
+✿ *CREATE TROJAN SUCCESS*✿
+──────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${trojanData.username}\`
@@ -291,19 +303,22 @@ async function createtrojan(username, exp, quota, limitip, serverId) {
 │ *Path*     : \`/trojan-ws\`
 │ *Path GRPC*: \`trojan-grpc\`
 └─────────────────────
-🔐 *URL TROJAN TLS*
+✿ *URL TROJAN TLS*
 \`
 ${trojanData.trojan_tls_link}
 \`
-🔐 *URL TROJAN HTTP*
+──────────────────────
+✿ *URL TROJAN HTTP*
 \`
 ${trojanData.trojan_nontls_link1}
 \`
-🔒 *URL TROJAN GRPC*
+──────────────────────
+✿ *URL TROJAN GRPC*
 \`
 ${trojanData.trojan_grpc_link}
 \`
-🔒 *PASSWORD*
+──────────────────────
+✿ *PASSWORD*
 \`
 ${trojanData.uuid}
 \`
@@ -313,7 +328,7 @@ ${trojanData.uuid}
 │ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih  Telah menggunakan layanan kami!✿
 `;
               console.log('Trojan account created successfully');
               return resolve(msg);
@@ -357,8 +372,9 @@ async function createshadowsocks(username, exp, quota, limitip, serverId) {
           if (response.data.status === "success") {
             const shadowsocksData = response.data.data;
             const msg = `
-🌟 *AKUN SHADOWSOCKS PREMIUM* 🌟
-
+──────────────────────            
+✿ *SREATE SHADOWSOCKS SUCCESS* ✿
+──────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${shadowsocksData.username}\`
@@ -371,15 +387,17 @@ async function createshadowsocks(username, exp, quota, limitip, serverId) {
 │ *Path*     : \`/shadowsocks\`
 │ *Path GRPC*: \`shadowsocks-grpc\`
 └─────────────────────
-🔐 *URL SHADOWSOCKS TLS*
+✿ *URL SHADOWSOCKS TLS*
 \`
 ${shadowsocksData.ss_link_ws}
 \`
-🔒 *URL SHADOWSOCKS GRPC*
+──────────────────────
+✿ *URL SHADOWSOCKS GRPC*
 \`
 ${shadowsocksData.ss_link_grpc}
 \`
-🔒 *UUID*
+──────────────────────
+✿ *UUID*
 \`
 ${shadowsocksData.uuid}
 \`
@@ -389,7 +407,7 @@ ${shadowsocksData.uuid}
 │ IP Limit: \`${shadowsocksData.ip_limit === '0' ? 'Unlimited' : shadowsocksData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${shadowsocksData.domain}:81/shadowsocks-${shadowsocksData.username}.txt)
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih Telah Menggunakan Layanan Kami!✿ 
 `;
               console.log('Shadowsocks account created successfully');
               return resolve(msg);
