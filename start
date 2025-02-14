@@ -61,7 +61,7 @@ setup_bot() {
 	fi
 
     if [ ! -f /root/Nebotsell/app.js ]; then
-        git clone https://github.com/Diah082/Nebotsell /root/Nebotsell
+        git clone https://github.com/RyyStore/Nebotsell /root/Nebotsell
     fi
 
     if ! npm list --prefix /root/Nebotsell express telegraf axios moment sqlite3 >/dev/null 2>&1; then
