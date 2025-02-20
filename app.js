@@ -19,7 +19,7 @@ const PAYDISINI_KEY = vars.PAYDISINI_KEY;
 const BOT_TOKEN = vars.BOT_TOKEN;
 const port = vars.PORT || 50123;
 const ADMIN = vars.USER_ID; 
-const NAMA_STORE = vars.NAMA_STORE || '@NEWBIESTORE';
+const NAMA_STORE = vars.NAMA_STORE || '@RyyStore';
 const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 180_000 
 });
@@ -107,12 +107,12 @@ bot.command('admin', async (ctx) => {
 async function sendMainMenu(ctx) {
   const keyboard = [
     [
-      { text: '➕ Buat Akun', callback_data: 'service_create' },
-      { text: '♻️ Perpanjang Akun', callback_data: 'service_renew' }
+      { text: 'PANEL AKUN', callback_data: 'service_create' },
+      { text: 'RENEW AKUN', callback_data: 'service_renew' }
     ],
     [
-      { text: '💰 TopUp Saldo', callback_data: 'topup_saldo' },
-      { text: '💳 Cek Saldo', callback_data: 'cek_saldo' }
+      { text: 'TOPUP SALDO', callback_data: 'topup_saldo' },
+      { text: 'CEK SALDO', callback_data: 'cek_saldo' }
     ],
   ];
 
@@ -149,25 +149,32 @@ async function sendMainMenu(ctx) {
   } catch (err) {
     console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
   }
+  
+  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
+const userId = ctx.from.id;
 
-    const messageText = `* ${NAMA_STORE}
- ───────────────────
-█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
-█░░╦─╦╔╗╦─╔╗╔╗╔╦╗╔╗░░█
-█░░║║║╠─║─║─║║║║║╠─░░█
-█░░╚╩╝╚╝╚╝╚╝╚╝╩─╩╚╝░░█
-█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
-๑۞๑ POWERED BY @RyyStorevp1*
- ───────────────────
-${NAMA_STORE} menyediakan
-layanan VPN dengan mudah dan praktis
-Nikmati kemudahan dan kecepatan
-dalam layanan bot kami!
+    const messageText = `* ────────────────────────────
+          ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​​​​​ ≡
+ ────────────────────────────
+ Sᴇʟᴀᴍᴀᴛ Dᴀᴛᴀɴɢ *_${username}_*
+ 𝙸𝙳 𝚊𝚗𝚍𝚊: *_${userId}_*
+ ────────────────────────────
+Bingung tentang bug?                    
+ke @generatebugvpn_bot menyediakan   
+beberapa bug disitu. Tinggal ikuti saja.   
+langkahnya!                               
+ ────────────────────────────
+ 
+🔰TopUp Otomatis Sudah Bisa Di Lakukan!
 
-⏳ *Uptime bot:* ${days} Hari
-🌐 *Server tersedia:* ${jumlahServer}
-👥 *Jumlah pengguna:* ${jumlahPengguna}
-
+ ────────────────────────────
+⌛ *Uptime bot:* ${days} Hari
+☁ *Server tersedia:* ${jumlahServer}
+유 *Jumlah pengguna:* ${jumlahPengguna}
+────────────────────────────
+๑۞๑ OWNER @RyyStorevp1*
+   ☏ 6287767287284
+ ────────────────────────────
 *Silakan pilih opsi layanan:*`;
 
   try {
@@ -704,14 +711,14 @@ async function handleServiceAction(ctx, action) {
   if (action === 'create') {
     keyboard = [
       [
-	  { text: 'Buat Ssh/Ovpn', callback_data: 'create_ssh' },      
-      { text: 'Buat Vmess', callback_data: 'create_vmess' }
+	  { text: 'SSH/Ovpn', callback_data: 'create_ssh' },      
+      { text: 'VMESS', callback_data: 'create_vmess' }
 	  ],
       [
-	  { text: 'Buat Vless', callback_data: 'create_vless' },
-      { text: 'Buat Trojan', callback_data: 'create_trojan' }
+	  { text: 'VLESS', callback_data: 'create_vless' },
+      { text: 'TROJAN', callback_data: 'create_trojan' }
 	  ],
-      [{ text: '🔙 Kembali', callback_data: 'send_main_menu' }]
+      [{ text: 'KEMBALI', callback_data: 'send_main_menu' }]
     ];
   } else if (action === 'renew') {
     keyboard = [
@@ -943,15 +950,18 @@ async function startSelectServer(ctx, action, type, page = 0) {
       keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
 
       const serverList = currentServers.map(server => {
-        const hargaPer30Hari = server.harga * 30; 
-        const isFull = server.total_create_akun >= server.batas_create_akun;
-        return `🌐 *${server.nama_server}*\n` +
-               `💰 Harga per hari: Rp${server.harga}\n` +
-               `📅 Harga per 30 hari: Rp${hargaPer30Hari}\n` +
-               `📊 Quota: ${server.quota}GB\n` +
-               `🔢 Limit IP: ${server.iplimit} IP\n` +
-               (isFull ? `⚠️ *Server Penuh*` : `👥 Total Create Akun: ${server.total_create_akun}/${server.batas_create_akun}`);
-      }).join('\n\n');
+    const hargaPer30Hari = server.harga * 30; 
+    const isFull = server.total_create_akun >= server.batas_create_akun;
+    return `*──────────────────────*\n` +
+           `🌐 *${server.nama_server}*\n` +
+           `💵 Harga per hari: Rp${server.harga}\n` +
+           `🏷️ Harga per 30 hari: Rp${hargaPer30Hari}\n` +
+           `❇️ Quota: ${server.quota}GB\n` +
+           `🔐 Limit IP: ${server.iplimit} IP\n` +
+           (isFull ? `⚠️ *Server Penuh*` : `👥 Total Create Akun: ${server.total_create_akun}/${server.batas_create_akun}`) +  
+           `\n*──────────────────────*`; // Tambahan garis di bawah
+}).join('\n\n');
+
 
       if (ctx.updateType === 'callback_query') {
         ctx.editMessageText(`📋 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`, {
@@ -1990,7 +2000,7 @@ bot.action('topup_saldo', async (ctx) => {
 
     const keyboard = keyboard_nomor();
     
-    await ctx.reply('💰 *Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda:*', {
+    await ctx.reply('*Masukkan jumlah nominal TopUp yang Anda ingin tambahkan ke akun Anda (Minimal TopUp 12.000):*', {
       reply_markup: {
         inline_keyboard: keyboard
       },
@@ -2234,8 +2244,8 @@ async function handleDepositState(ctx, userId, data) {
     if (currentAmount.length === 0) {
       return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
     }
-    if (parseInt(currentAmount) < 25000) {
-      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 25 Ribu!', { show_alert: true });
+    if (parseInt(currentAmount) < 12000) {
+      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 12Ribu!', { show_alert: true });
     }
     global.depositState[userId].action = 'confirm_amount';
     await processDeposit(ctx, currentAmount);
@@ -2248,8 +2258,9 @@ async function handleDepositState(ctx, userId, data) {
     }
   }
 
+
   global.depositState[userId].amount = currentAmount;
-  const newMessage = `💰 *Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
+  const newMessage = `*Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda[Minimal 12.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
   if (newMessage !== ctx.callbackQuery.message.text) {
     await ctx.editMessageText(newMessage, {
       reply_markup: { inline_keyboard: keyboard_nomor() },
@@ -2454,7 +2465,14 @@ async function processDeposit(ctx, amount) {
   try {
     // Kirim QRIS Pembayaran dengan nominal unik
     await ctx.replyWithPhoto({ source: './qris.png' }, {
-      caption: `🌟 *Informasi Deposit Anda* 🌟\n\n💼 *Jumlah:* Rp ${uniqueAmount}\n⏳ *Mohon transfer Sebelum 3 Menit dengan nominal yang tepat agar terdeteksi otomatis!*`,
+      caption: `
+        ────────────────────────────
+            ✧*Iɴғᴏʀᴍᴀsɪ Dᴇᴘᴏsɪᴛ Aɴᴅᴀ*✧
+ ────────────────────────────  
+                *𝙅𝙐𝙈𝙇𝘼𝙃 𝙋𝙀𝙈𝘽𝘼𝙔𝘼𝙍𝘼𝙉*
+                              Rp ${uniqueAmount}
+ ────────────────────────────
+ *𝘔𝘰𝘩𝘰𝘯 SCAN QR DI ATAS 𝘚𝘦𝘣𝘦𝘭𝘶𝘮 𝟑 𝘔𝘦𝘯𝘪𝘵 𝘥𝘦𝘯𝘨𝘢𝘯 𝘯𝘰𝘮𝘪𝘯𝘢𝘭 𝘺𝘢𝘯𝘨 𝘵𝘦𝘱𝘢𝘵 𝘢𝘨𝘢𝘳 𝘵𝘦𝘳𝘥𝘦𝘵𝘦𝘬𝘴𝘪 𝘰𝘵𝘰𝘮𝘢𝘵𝘪𝘴!*`,
       parse_mode: 'Markdown'
     });
 
