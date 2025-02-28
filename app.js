@@ -166,6 +166,7 @@ langkahnya!
  ────────────────────────────
  
 🔰TopUp Otomatis Sudah Bisa Di Lakukan!
+  [Minimal Deposit 10.000]
 
  ────────────────────────────
 ⌛ *Uptime bot:* ${days} Hari
@@ -221,6 +222,7 @@ bot.command('helpadmin', async (ctx) => {
 10. /editlimitcreate - Mengedit batas pembuatan akun server.
 11. /edittotalcreate - Mengedit total pembuatan akun server.
 12. /broadcast - Mengirim pesan siaran ke semua pengguna.
+13. /hapussaldo -Menghapus saldo
 
 Gunakan perintah ini dengan format yang benar untuk menghindari kesalahan.
 `;
@@ -2050,7 +2052,7 @@ bot.action('topup_saldo', async (ctx) => {
 
     const keyboard = keyboard_nomor();
     
-    await ctx.reply('*Masukkan jumlah nominal TopUp yang Anda ingin tambahkan ke akun Anda (Minimal TopUp 12.000):*', {
+    await ctx.reply('*Masukkan jumlah nominal TopUp yang Anda ingin tambahkan ke akun Anda (Minimal TopUp 10.000):*', {
       reply_markup: {
         inline_keyboard: keyboard
       },
@@ -2294,8 +2296,8 @@ async function handleDepositState(ctx, userId, data) {
     if (currentAmount.length === 0) {
       return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
     }
-    if (parseInt(currentAmount) < 12000) {
-      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 12Ribu!', { show_alert: true });
+    if (parseInt(currentAmount) < 10000) {
+      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 10Ribu!', { show_alert: true });
     }
     global.depositState[userId].action = 'confirm_amount';
     await processDeposit(ctx, currentAmount);
@@ -2310,7 +2312,7 @@ async function handleDepositState(ctx, userId, data) {
 
 
   global.depositState[userId].amount = currentAmount;
-  const newMessage = `*Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda[Minimal 12.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
+  const newMessage = `*Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda [Minimal 10.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
   if (newMessage !== ctx.callbackQuery.message.text) {
     await ctx.editMessageText(newMessage, {
       reply_markup: { inline_keyboard: keyboard_nomor() },
@@ -2341,10 +2343,10 @@ async function handleAddSaldo(ctx, userStateData, data) {
     if (!/^[0-9]+$/.test(data)) {
       return await ctx.answerCbQuery('⚠️ *Jumlah saldo tidak valid!*', { show_alert: true });
     }
-    if (currentSaldo.length < 10) {
+    if (currentSaldo.length < 12) {
       currentSaldo += data;
     } else {
-      return await ctx.answerCbQuery('⚠️ *Jumlah saldo maksimal adalah 10 karakter!*', { show_alert: true });
+      return await ctx.answerCbQuery('⚠️ *Jumlah saldo maksimal adalah 12 karakter!*', { show_alert: true });
     }
   }
 
