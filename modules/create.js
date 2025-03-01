@@ -145,7 +145,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 <b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>IP      :</b> <code>${iplimit} IP</code>
 <b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b> <code>${price.toLocaleString('id-ID')}</code>
+<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <i>Notif Pembelian Akun SSH..</i>`;
 
@@ -265,7 +265,7 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
 <b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>IP      :</b> <code>${limitip} IP</code>
 <b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b> <code>${price.toLocaleString('id-ID')}</code>
+<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <i>Notif Pembelian Akun VMess..</i>`;
 
@@ -385,7 +385,7 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
 <b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>IP      :</b> <code>${limitip} IP</code>
 <b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b> <code>${price.toLocaleString('id-ID')}</code>
+<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <i>Notif Pembelian Akun VLESS..</i>`;
 
@@ -504,7 +504,7 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
 <b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>IP      :</b> <code>${limitip} IP</code>
 <b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b> <code>${price.toLocaleString('id-ID')}</code>
+<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <i>Notif Pembelian Akun Trojan..</i>`;
 
