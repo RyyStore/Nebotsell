@@ -133,7 +133,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
               console.log('SSH account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '7251232303'; // Ganti dengan chat ID yang sesuai
+              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
               const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
@@ -253,7 +253,7 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
               console.log('VMess account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '7251232303'; // Ganti dengan chat ID yang sesuai
+              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
               const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
@@ -373,7 +373,7 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
               console.log('VLESS account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '7251232303'; // Ganti dengan chat ID yang sesuai
+              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
               const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
@@ -492,7 +492,7 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
               console.log('Trojan account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '7251232303'; // Ganti dengan chat ID yang sesuai
+              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
               const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
