@@ -134,7 +134,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 
               // Kirim notifikasi ke bot Telegram
               const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b>PEMBELIAN SSH SUKSES</b>
@@ -254,7 +254,7 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
 
               // Kirim notifikasi ke bot Telegram
               const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b>PEMBELIAN VMESS SUKSES</b>
@@ -374,7 +374,7 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
 
               // Kirim notifikasi ke bot Telegram
               const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b>PEMBELIAN VLESS SUKSES</b>
@@ -493,7 +493,7 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
 
               // Kirim notifikasi ke bot Telegram
               const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7716923032:AAHPQMZ1R0mFrI1voZ306oR3z85eO0fim6c'; // Ganti dengan token bot yang berbeda
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b>PEMBELIAN TROJAN SUKSES</b>
