@@ -15,11 +15,12 @@ const { renewssh, renewvmess, renewvless, renewtrojan, renewshadowsocks } = requ
 const fs = require('fs');
 const vars = JSON.parse(fs.readFileSync('./.vars.json', 'utf8'));
 
-const PAYDISINI_KEY = vars.PAYDISINI_KEY;
-const BOT_TOKEN = vars.BOT_TOKEN;
-const port = vars.PORT || 50123;
-const ADMIN = vars.USER_ID; 
-const NAMA_STORE = vars.NAMA_STORE || '@RyyStore';
+const PAYDISINI_KEY = vars.PAYDISINI_KEY; // Sudah di-set di VPS
+const BOT_TOKEN = vars.BOT_TOKEN; // Sudah di-set di VPS
+const port = vars.PORT || 50123; // Sudah di-set di VPS
+const ADMIN = vars.USER_ID; // Sudah di-set di VPS
+const NAMA_STORE = vars.NAMA_STORE || '@RyyStore'; // Sudah di-set di VPS
+const GROUP_ID = "-1002397066993"; // Tambahkan grup ID di sini
 const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 180_000 
 });
@@ -72,6 +73,7 @@ bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
   
   const userId = ctx.from.id;
+  const usernameTelegram = ctx.from.username || 'Tidak ada username'; // Ambil username Telegram
   db.get('SELECT * FROM users WHERE user_id = ?', [userId], (err, row) => {
     if (err) {
       console.error('Kesalahan saat memeriksa user_id:', err.message);
@@ -107,8 +109,7 @@ bot.command('admin', async (ctx) => {
 async function sendMainMenu(ctx) {
   const keyboard = [
     [
-      { text: 'PANEL AKUN', callback_data: 'service_create' },
-      { text: 'RENEW AKUN', callback_data: 'service_renew' }
+      { text: 'PANEL SERVER', callback_data: 'service_create' }
     ],
     [
       { text: 'TOPUP SALDO', callback_data: 'topup_saldo' },
@@ -1496,10 +1497,11 @@ bot.action('cek_saldo', async (ctx) => {
 const getUsernameById = async (userId) => {
   try {
     const telegramUser = await bot.telegram.getChat(userId);
-    return telegramUser.username || telegramUser.first_name;
+    // Jika username tidak ada, gunakan first_name atau User ID sebagai fallback
+    return telegramUser.username ? `@${telegramUser.username}` : telegramUser.first_name || `User ID: ${userId}`;
   } catch (err) {
     console.error('❌ Kesalahan saat mengambil username dari Telegram:', err.message);
-    throw new Error('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil username dari Telegram.*');
+    return `User ID: ${userId}`; // Kembalikan User ID jika terjadi error
   }
 };
 
@@ -2506,6 +2508,7 @@ async function processDeposit(ctx, amount) {
 
   lastRequestTime = currentTime;
   const userId = ctx.from.id;
+  const username = await getUsernameById(userId); // Ambil username menggunakan fungsi yang sudah diperbaiki
 
   // Buat nominal unik (2 angka random di belakang jumlah utama)
   const randomSuffix = Math.floor(10 + Math.random() * 90); // Angka random 10-99
@@ -2551,6 +2554,33 @@ async function processDeposit(ctx, amount) {
 
         await ctx.reply(`✅ *Pembayaran berhasil!* Saldo Anda telah ditambahkan sebesar *Rp${transaksi.amount}*`, { parse_mode: 'Markdown' });
 
+        // Kirim notifikasi ke admin
+        const adminMessage = `💰 * ⟨ Status TopUp Success! ⟩*\n\n👤 *Username:* ${username}\n🆔 *User ID:* ${userId}\n💵 *Jumlah:* Rp${transaksi.amount}`;
+        await bot.telegram.sendMessage(ADMIN, adminMessage, { parse_mode: 'Markdown' });
+
+        // Kirim notifikasi ke grup
+        const groupMessage = `
+──────────────────────
+⟨ STATUS TOPUP SUCCESS ⟩
+──────────────────────
+➥ User  : ${username}
+➥ Code  : TRx${Math.floor(1000 + Math.random() * 9000)} 
+➥ TopUp : Rp${transaksi.amount}
+➥ Pay   : Rp${uniqueAmount}
+➥ Date  : ${new Date().toISOString().split('T')[0]} 
+║▌║▌║ - ║▌║▌║
+𝗖𝗢𝗡𝗧𝗔𝗖𝗧
+➥Hubungi @RyyStorevp1 / +6287767287284
+║▌║▌║ - ║▌║▌║
+──────────────────────
+Notifikasi TopUp Telah Berhasil.
+`;
+        try {
+          await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+        } catch (error) {
+          console.error('❌ Gagal mengirim notifikasi ke grup:', error.message);
+        }
+
         pembayaranDiterima = true;
         break;
       }
@@ -2575,7 +2605,6 @@ async function processDeposit(ctx, amount) {
       process.exit(1); // Memicu restart oleh systemd
     }
   }
-
 
 
 // Fungsi untuk mengecek mutasi transaksi dari OkeConnect
