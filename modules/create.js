@@ -8,22 +8,32 @@ async function sendTelegramNotification(chatId, botToken, message) {
   const params = {
     chat_id: chatId,
     text: message,
-    parse_mode: 'HTML'
+    parse_mode: 'HTML' // Pastikan menggunakan parse_mode HTML
   };
 
   try {
-    await axios.post(url, params);
-    console.log('Telegram notification sent successfully');
+    const response = await axios.post(url, params);
+    if (response.data.ok) {
+      console.log('Notifikasi berhasil dikirim');
+    } else {
+      console.error('Gagal mengirim notifikasi:', response.data.description);
+    }
   } catch (error) {
-    console.error('Error sending Telegram notification:', error);
+    console.error('Error mengirim notifikasi:', error.response ? error.response.data : error.message);
   }
 }
 
-// Fungsi untuk menghitung harga berdasarkan durasi dan jumlah IP
-function calculatePrice(duration, iplimit) {
+// Fungsi untuk menghitung harga berdasarkan durasi, jumlah IP, dan kuota
+function calculatePrice(duration, iplimit, quota) {
+  // Jika kuota = 0 (unlimited), harga adalah 334 per hari
+  if (quota === 0 || quota === '0 GB') {
+    return 334 * duration;
+  }
+
+  // Jika kuota > 0, hitung harga berdasarkan jumlah IP
   const pricePerDay = {
     1: 134, // Harga per hari untuk 1 IP
-    2: 200, // Harga per hari untuk 2 IP
+    2: 250, // Harga per hari untuk 2 IP
     3: 500, // Harga per hari untuk 3 IP
   };
 
@@ -36,7 +46,6 @@ function calculatePrice(duration, iplimit) {
   const price = pricePerDay[iplimit] * duration;
   return price;
 }
-
 // Fungsi untuk membuat akun SSH
 async function createssh(username, password, exp, iplimit, serverId, usernameTelegram) {
   console.log(`Creating SSH account for ${username} with expiry ${exp} days, IP limit ${iplimit}, and password ${password}`);
@@ -46,11 +55,7 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-  // Validasi usernameTelegram
-  if (!usernameTelegram) {
-    console.warn('Username Telegram tidak diberikan. Menggunakan nilai default "unknown".');
-    usernameTelegram = 'unknown'; // Nilai default jika usernameTelegram tidak ada
-  }
+
 
   // Hitung harga berdasarkan durasi dan jumlah IP
   let price;
@@ -79,6 +84,15 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
         .then(response => {
           if (response.data.status === "success") {
             const sshData = response.data.data;
+            const quota = sshData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+
+            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+            let price;
+            try {
+              price = calculatePrice(exp, iplimit, quota);
+            } catch (error) {
+              return resolve(`❌ ${error.message}`);
+            }
             const msg = `
 ──────────────────────
 ✿ *CREATE SSH SUCCESS*✿
@@ -133,21 +147,28 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
               console.log('SSH account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
+              const chatId = '-1002397066993'; // Ganti dengan chat ID grup
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot Anda
+
+              
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>PEMBELIAN SSH SUKSES</b>
+<b>⟨ PEMBELIAN SSH SUCCESS ⟩</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>TRX DARI PayVpn Bot</b>
-<b>DATE    :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>CITY    :</b> <code>${city}</code>
-<b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
-<b>IP      :</b> <code>${iplimit} IP</code>
-<b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> TRX DARI PayVpn Bot </b>
+<b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
+<b>➥CITY      :</b> <code>${city}</code>
+<b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
+<b>➥IP        :</b> <code>${iplimit} IP</code>
+<b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
+<b>➥DURASI  :</b> <code>${exp} Hari</code>
+<b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> ║▌║▌║ - ║▌║▌║</b>
+<b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
+<b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
+<b> ║▌║▌║ - ║▌║▌║</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<i>Notif Pembelian Akun SSH..</i>`;
+<i>Notif Pembelian Akun SSH success</i>`;
 
               sendTelegramNotification(chatId, botToken, telegramMessage);
 
@@ -166,24 +187,19 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 }
 
 // Fungsi untuk membuat akun VMess
-async function createvmess(username, exp, quota, limitip, serverId, usernameTelegram) {
-  console.log(`Creating VMess account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${limitip} on server ${serverId}`);
+async function createvmess(username, exp, quota, iplimit, serverId, usernameTelegram) {
+  console.log(`Creating VMess account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
   
   // Validasi username
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-  // Validasi usernameTelegram
-  if (!usernameTelegram) {
-    console.warn('Username Telegram tidak diberikan. Menggunakan nilai default "unknown".');
-    usernameTelegram = 'unknown'; // Nilai default jika usernameTelegram tidak ada
-  }
 
   // Hitung harga berdasarkan durasi dan jumlah IP
   let price;
   try {
-    price = calculatePrice(exp, limitip);
+    price = calculatePrice(exp, iplimit);
   } catch (error) {
     return `❌ ${error.message}`;
   }
@@ -201,12 +217,21 @@ async function createvmess(username, exp, quota, limitip, serverId, usernameTele
       const domain = server.domain;
       const auth = server.auth;
       const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
-      const param = `:5888/createvmess?user=${username}&exp=${exp}&quota=${quota}&iplimit=${limitip}&auth=${auth}`;
+      const param = `:5888/createvmess?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const vmessData = response.data.data;
+            const quota = vmessData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+
+            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+            let price;
+            try {
+              price = calculatePrice(exp, iplimit, quota);
+            } catch (error) {
+              return resolve(`❌ ${error.message}`);
+            }
             const msg = `
 ──────────────────────
 ✿ *CREATE VMESS SUCCESS*✿
@@ -253,21 +278,29 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
               console.log('VMess account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
+              const chatId = '-1002397066993'; // Ganti dengan chat ID grup
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot Anda
+
+              
+
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>PEMBELIAN VMESS SUKSES</b>
+<b>⟨ PEMBELIAN VMESS SUCCESS ⟩</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>TRX DARI PayVpn Bot</b>
-<b>DATE    :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>CITY    :</b> <code>${city}</code>
-<b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
-<b>IP      :</b> <code>${limitip} IP</code>
-<b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> TRX DARI PayVpn Bot </b>
+<b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
+<b>➥CITY      :</b> <code>${city}</code>
+<b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
+<b>➥IP        :</b> <code>${iplimit} IP</code>
+<b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
+<b>➥DURASI  :</b> <code>${exp} Hari</code>
+<b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> ║▌║▌║ - ║▌║▌║</b>
+<b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
+<b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
+<b> ║▌║▌║ - ║▌║▌║</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<i>Notif Pembelian Akun VMess..</i>`;
+<i>Notif Pembelian Akun VMess success</i>`;
 
               sendTelegramNotification(chatId, botToken, telegramMessage);
 
@@ -286,24 +319,18 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
 }
 
 // Fungsi untuk membuat akun VLESS
-async function createvless(username, exp, quota, limitip, serverId, usernameTelegram) {
-  console.log(`Creating VLESS account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${limitip} on server ${serverId}`);
+async function createvless(username, exp, quota, iplimit, serverId, usernameTelegram) {
+  console.log(`Creating VLESS account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
   
   // Validasi username
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-  // Validasi usernameTelegram
-  if (!usernameTelegram) {
-    console.warn('Username Telegram tidak diberikan. Menggunakan nilai default "unknown".');
-    usernameTelegram = 'unknown'; // Nilai default jika usernameTelegram tidak ada
-  }
-
   // Hitung harga berdasarkan durasi dan jumlah IP
   let price;
   try {
-    price = calculatePrice(exp, limitip);
+    price = calculatePrice(exp, iplimit);
   } catch (error) {
     return `❌ ${error.message}`;
   }
@@ -321,12 +348,30 @@ async function createvless(username, exp, quota, limitip, serverId, usernameTele
       const domain = server.domain;
       const auth = server.auth;
       const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
-      const param = `:5888/createvless?user=${username}&exp=${exp}&quota=${quota}&iplimit=${limitip}&auth=${auth}`;
+      const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
+
+      // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+      let price;
+      try {
+        price = calculatePrice(exp, iplimit, quota);
+      } catch (error) {
+        return resolve(`❌ ${error.message}`);
+      }
+      const param = `:5888/createvless?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const vlessData = response.data.data;
+            const quota = vlessData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+
+            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+            let price;
+            try {
+              price = calculatePrice(exp, iplimit, quota);
+            } catch (error) {
+              return resolve(`❌ ${error.message}`);
+            }
             const msg = `
 ──────────────────────
 ✿ *CREATE VLESS SUCCESS*✿
@@ -373,21 +418,28 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
               console.log('VLESS account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
+              const chatId = '-1002397066993'; // Ganti dengan chat ID grup
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot Anda
+
+             
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>PEMBELIAN VLESS SUKSES</b>
+<b>⟨ PEMBELIAN VLESS SUCCESS ⟩</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>TRX DARI PayVpn Bot</b>
-<b>DATE    :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>CITY    :</b> <code>${city}</code>
-<b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
-<b>IP      :</b> <code>${limitip} IP</code>
-<b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> TRX DARI PayVpn Bot </b>
+<b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
+<b>➥CITY      :</b> <code>${city}</code>
+<b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
+<b>➥IP        :</b> <code>${iplimit} IP</code>
+<b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
+<b>➥DURASI  :</b> <code>${exp} Hari</code>
+<b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> ║▌║▌║ - ║▌║▌║</b>
+<b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
+<b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
+<b> ║▌║▌║ - ║▌║▌║</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<i>Notif Pembelian Akun VLESS..</i>`;
+<i>Notif Pembelian Akun VLESS success.</i>`;
 
               sendTelegramNotification(chatId, botToken, telegramMessage);
 
@@ -406,24 +458,19 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
 }
 
 // Fungsi untuk membuat akun Trojan
-async function createtrojan(username, exp, quota, limitip, serverId, usernameTelegram) {
-  console.log(`Creating Trojan account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${limitip} on server ${serverId}`);
+async function createtrojan(username, exp, quota, iplimit, serverId, usernameTelegram) {
+  console.log(`Creating Trojan account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
   
   // Validasi username
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-  // Validasi usernameTelegram
-  if (!usernameTelegram) {
-    console.warn('Username Telegram tidak diberikan. Menggunakan nilai default "unknown".');
-    usernameTelegram = 'unknown'; // Nilai default jika usernameTelegram tidak ada
-  }
 
   // Hitung harga berdasarkan durasi dan jumlah IP
   let price;
   try {
-    price = calculatePrice(exp, limitip);
+    price = calculatePrice(exp, iplimit);
   } catch (error) {
     return `❌ ${error.message}`;
   }
@@ -441,12 +488,31 @@ async function createtrojan(username, exp, quota, limitip, serverId, usernameTel
       const domain = server.domain;
       const auth = server.auth;
       const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
-      const param = `:5888/createtrojan?user=${username}&exp=${exp}&quota=${quota}&iplimit=${limitip}&auth=${auth}`;
+      const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
+
+      // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+      let price;
+      try {
+        price = calculatePrice(exp, iplimit, quota);
+      } catch (error) {
+        return resolve(`❌ ${error.message}`);
+      }
+      
+      const param = `:5888/createtrojan?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const trojanData = response.data.data;
+            const quota = trojanData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+
+            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
+            let price;
+            try {
+              price = calculatePrice(exp, iplimit, quota);
+            } catch (error) {
+              return resolve(`❌ ${error.message}`);
+            }
             const msg = `
 ──────────────────────
 ✿ *CREATE TROJAN SUCCESS*✿
@@ -492,21 +558,28 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
               console.log('Trojan account created successfully');
 
               // Kirim notifikasi ke bot Telegram
-              const chatId = '-1002397066993'; // Ganti dengan chat ID yang sesuai
-              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot yang berbeda
+              const chatId = '-1002397066993'; // Ganti dengan chat ID grup
+              const botToken = '7849138453:AAGzj5b599sekbkr7j74aOmNaJpw2RoznHA'; // Ganti dengan token bot Anda
+
+             
               const telegramMessage = `
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>PEMBELIAN TROJAN SUKSES</b>
+<b>⟨ PEMBELIAN TROJAN SUCCESS ⟩</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<b>TRX DARI PayVpn Bot</b>
-<b>DATE    :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>CITY    :</b> <code>${city}</code>
-<b>USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
-<b>IP      :</b> <code>${limitip} IP</code>
-<b>DURASI  :</b> <code>${exp} Hari</code>
-<b>HARGA   :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> TRX DARI PayVpn Bot </b>
+<b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
+<b>➥CITY      :</b> <code>${city}</code>
+<b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
+<b>➥IP        :</b> <code>${iplimit} IP</code>
+<b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
+<b>➥DURASI  :</b> <code>${exp} Hari</code>
+<b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<b> ║▌║▌║ - ║▌║▌║</b>
+<b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
+<b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
+<b> ║▌║▌║ - ║▌║▌║</b>
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
-<i>Notif Pembelian Akun Trojan..</i>`;
+<i>Notif Pembelian Akun Trojan success</i>`;
 
               sendTelegramNotification(chatId, botToken, telegramMessage);
 
@@ -524,5 +597,5 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
   });
 }
 
-// Ekspor semua fungsi
+
 module.exports = { createssh, createvmess, createvless, createtrojan };
