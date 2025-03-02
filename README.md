@@ -3,15 +3,7 @@
 
 ![IMAGE](https://raw.githubusercontent.com/RyyStore/Nebotsell/main/1000019806-removebg-preview.png)
 
-<br>
-<h2 align="center"> ✧ Join My WhatsApp Group For Support ✧ </h2>
 
-<h2 align="center">
-  <a href="[https://gcwa.nevpn.site](https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ)">
-    <img src="https://img.shields.io/badge/Join Group-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" />
-  </a>
-</h>
-<br>
 
 ### INSTALL BOT RESELLER 
 <pre><code>wget -q https://raw.githubusercontent.com/RyyStore/Nebotsell/main/start && chmod +x start && ./start nebotsell
