@@ -36,12 +36,10 @@
 ```
 ✨ Selamat menggunakan layanan kami! ✨
 
-### CONTACT NEWBIE <br>
+### CONTACT RyyStore <br>
 
 Jika Anda memiliki pertanyaan atau masalah, silakan hubungi kami di
 
-<a href="https://t.me/newbie_store24" target=”_blank”><img src="https://img.shields.io/static/v1?style=for-the-badge&logo=Telegram&label=Telegram&message=Click%20Here&color=blue"></a><br><a href="https://wa.me/6282326322300" target=”_blank”><img src="https://img.shields.io/static/v1?style=for-the-badge&logo=Whatsapp&label=Whatsapp&message=Click%20Here&color=green"></a><br>
-<br>
-<h1 align="center"> ✧ Thanks To NEWBIE_STORE ✧ </h1>
+<a href="https://t.me/RyyStorevp1" target=”_blank”><img src="https://img.shields.io/static/v1?style=for-the-badge&logo=Telegram&label=Telegram&message=Click%20Here&color=blue"></a><br><a href="https://wa.me/6287767287284" target=”_blank”><img src="https://img.shields.io/static/v1?style=for-the-badge&logo=Whatsapp&label=Whatsapp&message=Click%20Here&color=green"></a><br>
 <br>
 <h3 align="center"> © Copyright by FTVPN </h3>
