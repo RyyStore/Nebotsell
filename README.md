@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://readme-typing-svg.demolab.com?font=Capriola&size=40&duration=4000&pause=450&color=F70069&background=FFFFAA00&center=true&random=false&width=600&height=100&lines=NEBOT RESELLER !;Explore the world of features!" /></p>
 
-![IMAGE](https://raw.githubusercontent.com/diah082/Nebotsell/main/Ne.jpg)
+![IMAGE](https://raw.githubusercontent.com/RyyStore/Nebotsell/main/1000019806-removebg-preview.png)
 
 <br>
 <h2 align="center"> ✧ Join My WhatsApp Group For Support ✧ </h2>
