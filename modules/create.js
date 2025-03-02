@@ -77,7 +77,7 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
 
       const domain = server.domain;
       const auth = server.auth;
-      const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
+      
       const param = `:5888/createssh?user=${username}&password=${password}&exp=${exp}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
       axios.get(url)
@@ -157,12 +157,13 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> TRX DARI PayVpn Bot </b>
 <b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>➥CITY      :</b> <code>${city}</code>
+
 <b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>➥IP        :</b> <code>${iplimit} IP</code>
 <b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
 <b>➥DURASI  :</b> <code>${exp} Hari</code>
 <b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> ║▌║▌║ - ║▌║▌║</b>
 <b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
 <b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
@@ -216,7 +217,7 @@ async function createvmess(username, exp, quota, iplimit, serverId, usernameTele
 
       const domain = server.domain;
       const auth = server.auth;
-      const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
+      
       const param = `:5888/createvmess?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
       axios.get(url)
@@ -289,12 +290,12 @@ Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessDa
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> TRX DARI PayVpn Bot </b>
 <b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>➥CITY      :</b> <code>${city}</code>
 <b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>➥IP        :</b> <code>${iplimit} IP</code>
 <b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
 <b>➥DURASI  :</b> <code>${exp} Hari</code>
 <b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> ║▌║▌║ - ║▌║▌║</b>
 <b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
 <b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
@@ -347,7 +348,7 @@ async function createvless(username, exp, quota, iplimit, serverId, usernameTele
 
       const domain = server.domain;
       const auth = server.auth;
-      const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
+      
       const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
 
       // Hitung harga berdasarkan durasi, jumlah IP, dan quota
@@ -428,12 +429,12 @@ Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessDa
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> TRX DARI PayVpn Bot </b>
 <b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>➥CITY      :</b> <code>${city}</code>
 <b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>➥IP        :</b> <code>${iplimit} IP</code>
 <b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
 <b>➥DURASI  :</b> <code>${exp} Hari</code>
 <b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> ║▌║▌║ - ║▌║▌║</b>
 <b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
 <b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
@@ -487,7 +488,7 @@ async function createtrojan(username, exp, quota, iplimit, serverId, usernameTel
 
       const domain = server.domain;
       const auth = server.auth;
-      const city = server.city || 'Singapore SGDO'; // Gunakan 'Singapore SGDO' jika city tidak tersedia
+      
       const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
 
       // Hitung harga berdasarkan durasi, jumlah IP, dan quota
@@ -568,12 +569,12 @@ Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${troja
 <code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> TRX DARI PayVpn Bot </b>
 <b>➥DATE     :</b> <code>${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</code>
-<b>➥CITY      :</b> <code>${city}</code>
 <b>➥USER VPN:</b> <code>${username.substring(0, 3)}xxx</code>
 <b>➥IP        :</b> <code>${iplimit} IP</code>
 <b>➥KUOTA    :</b> <code>${quota === 0 || quota === '0 GB' ? 'Unlimited' : `${quota}`}</code>
 <b>➥DURASI  :</b> <code>${exp} Hari</code>
 <b>➥HARGA  :</b>Rp <code>${price.toLocaleString('id-ID')}</code>
+<code>◇━━━━━━━━━━━━━━━━━━━◇</code>
 <b> ║▌║▌║ - ║▌║▌║</b>
 <b>𝗖𝗢𝗡𝗧𝗔𝗖𝗧</b>
 <b>➥Hubungi @RyyStorevp1 / +6287767287284</b>
