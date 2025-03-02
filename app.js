@@ -389,6 +389,27 @@ async function sendMessageToUser(userId, message, ctx) {
     }
 }
 
+async function sendGroupNotification(username, userId, serviceType, serverName, expDays) {
+  const groupMessage = `
+──────────────────────
+⟨ TRX PAYVPN BOT ⟩
+──────────────────────
+THANKS TO
+➥ User  : [${username}](tg://user?id=${userId})
+──────────────────────
+➥ Layanan : ${serviceType}
+➥ Server : ${serverName}
+──────────────────────
+Notifikasi Pembelian detail di bawah.
+`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi berhasil dikirim ke grup untuk user ${username}`);
+  } catch (error) {
+    console.error('❌ Gagal mengirim notifikasi ke grup:', error.message);
+  }
+}
 
 
 bot.command('addsaldo', async (ctx) => {
@@ -1169,19 +1190,36 @@ bot.on('text', async (ctx) => {
           if (saldo < totalHarga) {
             return ctx.reply('❌ *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
           }
-          if (action === 'create') {
-            if (type === 'vmess') {
-              msg = await createvmess(username, exp, quota, iplimit, serverId);
-            } else if (type === 'vless') {
-              msg = await createvless(username, exp, quota, iplimit, serverId);
-            } else if (type === 'trojan') {
-              msg = await createtrojan(username, exp, quota, iplimit, serverId);
-            } else if (type === 'shadowsocks') {
-              msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
-            } else if (type === 'ssh') {
-              msg = await createssh(username, password, exp, iplimit, serverId);
-            }
-          } else if (action === 'renew') {
+          // Contoh di bagian create_vmess, create_vless, create_trojan, create_shadowsocks, atau create_ssh
+if (action === 'create') {
+  if (type === 'vmess') {
+    msg = await createvmess(username, exp, quota, iplimit, serverId);
+  } else if (type === 'vless') {
+    msg = await createvless(username, exp, quota, iplimit, serverId);
+  } else if (type === 'trojan') {
+    msg = await createtrojan(username, exp, quota, iplimit, serverId);
+  } else if (type === 'shadowsocks') {
+    msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
+  } else if (type === 'ssh') {
+    msg = await createssh(username, password, exp, iplimit, serverId);
+  }
+
+  // Kirim notifikasi ke grup setelah akun berhasil dibuat
+  const server = await new Promise((resolve, reject) => {
+    db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row);
+      }
+    });
+  });
+
+
+  if (server) {
+    await sendGroupNotification(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
+  }
+}else if (action === 'renew') {
             if (type === 'vmess') {
               msg = await renewvmess(username, exp, quota, iplimit, serverId);
             } else if (type === 'vless') {
@@ -2563,7 +2601,7 @@ async function processDeposit(ctx, amount) {
 ──────────────────────
 ⟨ STATUS TOPUP SUCCESS ⟩
 ──────────────────────
-➥ User  : ${username}
+➥ User  : [${username}](tg://user?id=${userId})
 ➥ Code  : TRx${Math.floor(1000 + Math.random() * 9000)} 
 ➥ TopUp : Rp${transaksi.amount}
 ➥ Pay   : Rp${uniqueAmount}
