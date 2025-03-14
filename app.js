@@ -3,6 +3,8 @@ const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 const crypto = require('crypto');
 const { Telegraf, Scenes, session } = require('telegraf');
+const topUpQueue = require('./queue');
+
 
 const app = express();
 const axios = require('axios');
@@ -53,6 +55,8 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
   }
 });
 
+
+
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE,
@@ -69,20 +73,34 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 const userState = {};
 console.log('User state initialized');
 
+const userSessions = {}; // Simpan message_id terakhir untuk setiap user
+
+const userMessages = {}; // Menyimpan message_id terakhir untuk setiap user
+
 bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
-  
+
   const userId = ctx.from.id;
-  const usernameTelegram = ctx.from.username || 'Tidak ada username'; // Ambil username Telegram
-  db.get('SELECT * FROM users WHERE user_id = ?', [userId], (err, row) => {
+  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
+
+  // **Hapus pesan lama jika ada**
+  if (userMessages[userId]) {
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]);
+      console.log(`Pesan lama (${userMessages[userId]}) dihapus untuk user ${userId}`);
+    } catch (error) {
+      console.warn(`Gagal menghapus pesan lama: ${error.message}`);
+    }
+  }
+
+  // Ambil data dari database
+  db.get('SELECT * FROM users WHERE user_id = ?', [userId], async (err, row) => {
     if (err) {
       console.error('Kesalahan saat memeriksa user_id:', err.message);
       return;
     }
 
-    if (row) {
-      console.log(`User ID ${userId} sudah ada di database`);
-    } else {
+    if (!row) {
       db.run('INSERT INTO users (user_id) VALUES (?)', [userId], (err) => {
         if (err) {
           console.error('Kesalahan saat menyimpan user_id:', err.message);
@@ -91,10 +109,81 @@ bot.command(['start', 'menu'], async (ctx) => {
         }
       });
     }
-  });
 
-  await sendMainMenu(ctx);
+    const jumlahServer = await getJumlahServer();
+    const jumlahPengguna = await getJumlahPengguna();
+
+    const keyboard = [
+      [
+        { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
+        { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
+      ],
+      [
+        { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
+        { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
+      ],
+      [
+        { text: 'GRUP TELEGRAM', url: 'https://t.me/RyyStoreevpn/1' },
+        { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' },
+      ],
+      [
+        { text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }
+      ]
+    ];
+
+    const messageText = `* ──────────────────────────
+          ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​ ≡
+ ──────────────────────────
+                 ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                          
+ ──────────────────────────
+  Sᴇʟᴀᴍᴀᴛ Dᴀᴛᴀɴɢ *_${username}_*
+ 𝙸𝙳 𝚊𝚗𝚍𝚊: *_${userId}_*
+ ──────────────────────────
+ 
+Jika sudah paham
+Bisa langsung ke MainMenu♻️
+
+──────────────────────────
+Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
+SGDO 🇸🇬    : 134/Hᴀʀɪ
+INDO  🇮🇩    : 334/Hᴀʀɪ
+──────────────────────────
+๑۞๑ 𝗞𝗘𝗦𝗨𝗹𝗜𝗧𝗔𝗡❓𝘾𝙃𝘼𝙏 𝙊𝙒𝙉𝙀𝙍 @RyyStorevp1*
+   ☏ [WhatsApp](https://wa.me/6287767287284)
+ ──────────────────────────
+*Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
+
+    try {
+      const sentMessage = await ctx.reply(messageText, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
+      });
+
+      // **Simpan message_id baru untuk nanti dihapus saat /menu dipanggil lagi**
+      userMessages[userId] = sentMessage.message_id;
+      console.log(`Pesan baru disimpan dengan ID: ${sentMessage.message_id}`);
+    } catch (error) {
+      console.error('Error saat mengirim menu utama:', error);
+    }
+  });
 });
+
+
+
+
+// Fungsi untuk mendapatkan jumlah server
+async function getJumlahServer() {
+  // Implementasi query ke database atau sumber data lainnya
+  return 10; // Contoh nilai
+}
+
+// Fungsi untuk mendapatkan jumlah pengguna
+async function getJumlahPengguna() {
+  // Implementasi query ke database atau sumber data lainnya
+  return 100; // Contoh nilai
+}
 
 bot.command('admin', async (ctx) => {
   console.log('Admin menu requested');
@@ -106,102 +195,154 @@ bot.command('admin', async (ctx) => {
 
   await sendAdminMenu(ctx);
 });
-async function sendMainMenu(ctx) {
-  const keyboard = [
-    [
-      { text: 'PANEL SERVER', callback_data: 'service_create' }
-    ],
-    [
-      { text: 'TOPUP SALDO', callback_data: 'topup_saldo' },
-      { text: 'CEK SALDO', callback_data: 'cek_saldo' }
-    ],
-  ];
 
-  const uptime = os.uptime();
-  const days = Math.floor(uptime / (60 * 60 * 24));
-  
-  let jumlahServer = 0;
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
-    jumlahServer = row.count;
-  } catch (err) {
-    console.error('Kesalahan saat mengambil jumlah server:', err.message);
-  }
-  let jumlahPengguna = 0;
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
-    jumlahPengguna = row.count;
-  } catch (err) {
-    console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
-  }
-  
-  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
-const userId = ctx.from.id;
+bot.action('main_menu_refresh', async (ctx) => {
+  console.log('Tombol MAIN MENU♻️ diklik oleh:', ctx.from.id);
 
-    const messageText = `* ────────────────────────────
-          ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​​​​​ ≡
- ────────────────────────────
+  try {
+    console.log('Mencoba menghapus pesan...');
+    await ctx.deleteMessage();
+    console.log('Pesan berhasil dihapus.');
+  } catch (deleteError) {
+    console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+  }
+
+  try {
+    console.log('Mencoba menampilkan menu utama...');
+    await sendMainMenu(ctx);
+    console.log('Menu utama berhasil ditampilkan.');
+  } catch (menuError) {
+    console.error('Gagal menampilkan menu utama:', menuError);
+    await ctx.reply('❌ Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
+
+bot.action('refresh_menu', async (ctx) => {
+  try {
+    // Hapus pesan menu saat ini
+    await ctx.deleteMessage();
+    console.log('Menu dihapus dan akan ditampilkan ulang.');
+
+    // Tampilkan ulang menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal menghapus pesan atau menampilkan ulang menu:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
+
+
+   async function sendMainMenu(ctx) {
+     const keyboard = [
+       [
+         { text: 'CREATE AKUN', callback_data: 'service_create' },
+         { text: 'RENEW AKUN', callback_data: 'service_renew' }
+       ],
+       [
+         { text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' },
+       ],
+       [
+        { text: 'REFRESH', callback_data: 'refresh_menu' }
+       ],
+     ];
+
+     const uptime = os.uptime();
+     const days = Math.floor(uptime / (60 * 60 * 24));
+
+     let jumlahServer = 0;
+     try {
+       const row = await new Promise((resolve, reject) => {
+         db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
+           if (err) {
+             reject(err);
+           } else {
+             resolve(row);
+           }
+         });
+       });
+       jumlahServer = row.count;
+     } catch (err) {
+       console.error('Kesalahan saat mengambil jumlah server:', err.message);
+     }
+
+     let jumlahPengguna = 0;
+     try {
+       const row = await new Promise((resolve, reject) => {
+         db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
+           if (err) {
+             reject(err);
+           } else {
+             resolve(row);
+           }
+         });
+       });
+       jumlahPengguna = row.count;
+     } catch (err) {
+       console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
+     }
+
+     const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
+     const userId = ctx.from.id;
+
+     // Ambil saldo pengguna dari database
+     let saldo = 0;
+     try {
+       const row = await new Promise((resolve, reject) => {
+         db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
+           if (err) {
+             reject(err);
+           } else {
+             resolve(row);
+           }
+         });
+       });
+       saldo = row ? row.saldo : 0;
+     } catch (err) {
+       console.error('Kesalahan saat mengambil saldo pengguna:', err.message);
+     }
+
+     const messageText = `* ──────────────────────────
+         ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​ ≡
+ ──────────────────────────
  Sᴇʟᴀᴍᴀᴛ Dᴀᴛᴀɴɢ *_${username}_*
  𝙸𝙳 𝚊𝚗𝚍𝚊: *_${userId}_*
- ────────────────────────────
-Bingung tentang bug?                    
-ke @generatebugvpn_bot menyediakan   
-beberapa bug disitu. Tinggal ikuti saja.   
-langkahnya!                               
- ────────────────────────────
+ ──────────────────────────
+ᴋᴇᴍʙᴀʟɪ ᴋᴇ Dᴀsʜʙᴏᴀʀᴅ Tᴜᴛᴏʀɪᴀʟ:
+/menu                           
+ ──────────────────────────
  
-🔰TopUp Otomatis Sudah Bisa Di Lakukan!
-  [Minimal Deposit 10.000]
+Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
+SGDO 🇸🇬    : 134/Hᴀʀɪ
+INDO  🇮🇩    : 334/Hᴀʀɪ
 
- ────────────────────────────
-⌛ *Uptime bot:* ${days} Hari
-☁ *Server tersedia:* ${jumlahServer}
-유 *Jumlah pengguna:* ${jumlahPengguna}
-────────────────────────────
-๑۞๑ OWNER @RyyStorevp1*
-   ☏ 6287767287284
- ────────────────────────────
-*Silakan pilih opsi layanan:*`;
+──────────────────────────
 
-  try {
-    await ctx.editMessageText(messageText, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: keyboard
-      }
-    });
-    console.log('Main menu sent');
-  } catch (error) {
-    if (error.response && error.response.error_code === 400) {
-      // Jika pesan tidak dapat diedit, kirim pesan baru
-      await ctx.reply(messageText, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: keyboard
-        }
-      });
-      console.log('Main menu sent as new message');
-    } else {
-      console.error('Error saat mengirim menu utama:', error);
-    }
-  }
-}
+Sᴇᴍᴜᴀ sᴇʀᴠᴇʀ Dɪᴊᴀᴍɪɴ Bᴇʀɢᴀʀᴀɴsɪ 
+Sᴇsᴜᴀɪ Dᴜʀᴀsɪ ʏᴀɴɢ ᴅɪᴘɪʟɪʜ
+ 𝙆𝙚𝙘𝙪𝙖𝙡𝙞 𝙈𝙚𝙡𝙖𝙣𝙜𝙜𝙖𝙧 𝘼𝙩𝙪𝙧𝙖𝙣
+  
+ ──────────────────────────
+☁ *Sᴇʀᴠᴇʀ ᴛᴇʀsᴇᴅɪᴀ:* ${jumlahServer}
+유 *Tᴏᴛᴀʟ Usᴇʀ:* ${jumlahPengguna}
+💳 *Sᴀʟᴅᴏ:* Rp${saldo}
+──────────────────────────
+๑۞๑ 𝙊𝙒𝙉𝙀𝙍 𝘽𝙊𝙏 @RyyStorevp1*
+   ☏ [WhatsApp](https://wa.me/6287767287284)
+ ──────────────────────────
+*Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ*`;
+
+     try {
+       await ctx.reply(messageText, {
+         parse_mode: 'Markdown',
+         reply_markup: {
+           inline_keyboard: keyboard
+         }
+       });
+       console.log('Main menu sent');
+     } catch (error) {
+       console.error('Error saat mengirim menu utama:', error);
+     }
+   }
 bot.command('helpadmin', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
@@ -361,6 +502,13 @@ bot.command('send', async (ctx) => {
     }
 });
 
+bot.action('main_menu', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await sendMainMenu(ctx);
+});
+
 bot.action(/^broadcast_(\d+)_(.+)$/, async (ctx) => {
     const match = ctx.match;
     if (!match) return;
@@ -389,7 +537,8 @@ async function sendMessageToUser(userId, message, ctx) {
     }
 }
 
-async function sendGroupNotification(username, userId, serviceType, serverName, expDays) {
+// Fungsi untuk notifikasi pembelian
+async function sendGroupNotificationPurchase(username, userId, serviceType, serverName, expDays) {
   const groupMessage = `
 ──────────────────────
 ⟨ TRX PAYVPN BOT ⟩
@@ -405,12 +554,34 @@ Notifikasi Pembelian detail di bawah.
 
   try {
     await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
-    console.log(`✅ Notifikasi berhasil dikirim ke grup untuk user ${username}`);
+    console.log(`✅ Notifikasi pembelian berhasil dikirim ke grup untuk user ${username}`);
   } catch (error) {
-    console.error('❌ Gagal mengirim notifikasi ke grup:', error.message);
+    console.error('❌ Gagal mengirim notifikasi pembelian ke grup:', error.message);
   }
 }
 
+// Fungsi untuk notifikasi top-up
+async function sendGroupNotificationTopup(username, userId, amount, uniqueAmount) {
+  const groupMessage = `
+──────────────────────
+⟨ STATUS TOPUP SUCCESS ⟩
+──────────────────────
+➥ User  : [${username}](tg://user?id=${userId})
+➥ Code  : TRX-${Math.floor(100000 + Math.random() * 900000)}
+➥ TopUp : Rp${amount.toLocaleString('id-ID')}
+➥ Pay   : Rp${uniqueAmount.toLocaleString('id-ID')}
+➥ Date  : ${new Date().toLocaleString('id-ID')}
+──────────────────────
+Notifikasi TopUp Pengguna.
+`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi top-up berhasil dikirim ke grup untuk user ${username}`);
+  } catch (error) {
+    console.error('❌ Gagal mengirim notifikasi top-up ke grup:', error.message);
+  }
+}
 
 bot.command('addsaldo', async (ctx) => {
   const userId = ctx.message.from.id;
@@ -780,33 +951,35 @@ bot.command('edittotalcreate', async (ctx) => {
       ctx.reply(`✅ Total create akun server \`${domain}\` berhasil diubah menjadi \`${total_create_akun}\`.`, { parse_mode: 'Markdown' });
   });
 });
+
 async function handleServiceAction(ctx, action) {
   let keyboard;
   if (action === 'create') {
     keyboard = [
       [
-	  { text: 'SSH/Ovpn', callback_data: 'create_ssh' },      
-      { text: 'VMESS', callback_data: 'create_vmess' }
-	  ],
+        { text: 'SSH', callback_data: 'create_ssh' },
+        { text: 'VMESS', callback_data: 'create_vmess' }
+      ],
       [
-	  { text: 'VLESS', callback_data: 'create_vless' },
-      { text: 'TROJAN', callback_data: 'create_trojan' }
-	  ],
-      [{ text: 'KEMBALI', callback_data: 'send_main_menu' }]
+        { text: 'VLESS', callback_data: 'create_vless' },
+        { text: 'TROJAN', callback_data: 'create_trojan' }
+      ],
+      [{ text: 'KEMBALI', callback_data: 'kembali' }] // Tombol Kembali
     ];
   } else if (action === 'renew') {
     keyboard = [
       [
-	  { text: 'Perpanjang Ssh/Ovpn', callback_data: 'renew_ssh' },      
-      { text: 'Perpanjang Vmess', callback_data: 'renew_vmess' }
-	  ],
+        { text: 'RENEW SSH', callback_data: 'renew_ssh' },
+        { text: 'RENEW VMESS', callback_data: 'renew_vmess' }
+      ],
       [
-	  { text: 'Perpanjang Vless', callback_data: 'renew_vless' },
-      { text: 'Perpanjang Trojan', callback_data: 'renew_trojan' }
-	  ],
-      [{ text: '🔙 Kembali', callback_data: 'send_main_menu' }]
+        { text: 'RENEW VLESS', callback_data: 'renew_vless' },
+        { text: 'RENEW TROJAN', callback_data: 'renew_trojan' }
+      ],
+      [{ text: '🔙 Kembali', callback_data: 'kembali' }] // Tombol Kembali
     ];
-  } 
+  }
+
   try {
     await ctx.editMessageReplyMarkup({
       inline_keyboard: keyboard
@@ -826,6 +999,27 @@ async function handleServiceAction(ctx, action) {
     }
   }
 }
+
+bot.action('kembali', async (ctx) => {
+  console.log('Tombol Kembali diklik oleh:', ctx.from.id);
+
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
 async function sendAdminMenu(ctx) {
   const adminKeyboard = [
     [
@@ -881,7 +1075,26 @@ async function sendAdminMenu(ctx) {
   }
 }
 
+bot.action('send_main_menu', async (ctx) => {
+  console.log('Tombol Kembali ke Menu Utama diklik oleh:', ctx.from.id);
 
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
 bot.action('service_create', async (ctx) => {
   if (!ctx || !ctx.match) {
     return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
@@ -1022,6 +1235,8 @@ async function startSelectServer(ctx, action, type, page = 0) {
         keyboard.push(navButtons);
       }
       keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
+      
+      
 
       const serverList = currentServers.map(server => {
     const hargaPer30Hari = server.harga * 30; 
@@ -1217,7 +1432,7 @@ if (action === 'create') {
 
 
   if (server) {
-    await sendGroupNotification(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
+    await sendGroupNotificationPurchase(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
   }
 }else if (action === 'renew') {
             if (type === 'vmess') {
@@ -2077,32 +2292,102 @@ bot.action('nama_server_edit', async (ctx) => {
 
 bot.action('topup_saldo', async (ctx) => {
   try {
-    await ctx.answerCbQuery(); 
+    await ctx.answerCbQuery();
     const userId = ctx.from.id;
     console.log(`🔍 User ${userId} memulai proses top-up saldo.`);
-    
 
     if (!global.depositState) {
       global.depositState = {};
     }
     global.depositState[userId] = { action: 'request_amount', amount: '' };
-    
-    console.log(`🔍 User ${userId} diminta untuk memasukkan jumlah nominal saldo.`);
-    
 
     const keyboard = keyboard_nomor();
-    
-    await ctx.reply('*Masukkan jumlah nominal TopUp yang Anda ingin tambahkan ke akun Anda (Minimal TopUp 10.000):*', {
+
+    await ctx.reply('*Silahkan Masukkan Jumlah Deposit[Minimal TopUp 10.000]:*', {
       reply_markup: {
-        inline_keyboard: keyboard
+        inline_keyboard: keyboard,
       },
-      parse_mode: 'Markdown'
+      parse_mode: 'Markdown',
     });
   } catch (error) {
     console.error('❌ Kesalahan saat memulai proses top-up saldo:', error);
     await ctx.reply('❌ *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
   }
-}); 
+});
+
+bot.on('callback_query', async (ctx) => {
+  const userId = ctx.from.id;
+  const data = ctx.callbackQuery.data;
+
+  if (global.depositState && global.depositState[userId] && global.depositState[userId].action === 'request_amount') {
+    let currentAmount = global.depositState[userId].amount;
+
+    if (data === 'delete') {
+      currentAmount = currentAmount.slice(0, -1);
+    } else if (data === 'confirm') {
+      if (currentAmount.length === 0) {
+        return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
+      }
+      if (parseInt(currentAmount) < 10000) {
+        return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 10Ribu!', { show_alert: true });
+      }
+
+      // Buat nominal unik
+      const randomSuffix = Math.floor(10 + Math.random() * 90);
+      const uniqueAmount = parseInt(currentAmount) + randomSuffix;
+
+      // Kirim QRIS Pembayaran
+      try {
+        const message = await ctx.replyWithPhoto({ source: './qris.png' }, {
+          caption: `
+──────────────────────
+*Open TopUp Transaction Success*
+──────────────────────
+✧ *User*  : ${ctx.from.username}
+✧ *ID*    : ${userId}
+──────────────────────
+✧ *Code*  : TRX-${Math.floor(100000 + Math.random() * 900000)}
+✧ *Pay*   : Rp ${uniqueAmount.toLocaleString('id-ID')}
+✧ *Info*  : ⏳ Pending
+✧ *Exp*   : ${new Date(Date.now() + 3 * 60000).toLocaleTimeString('id-ID')}
+✧ *Date*  : ${new Date().toLocaleString('id-ID')}
+──────────────────────
+BAYAR SESUAI YANG TERTERA DI PAY
+──────────────────────`,
+          parse_mode: 'Markdown',
+        });
+
+        // Simpan ID pesan QR untuk dihapus nanti
+        global.depositState[userId] = { uniqueAmount, userId, messageId: message.message_id };
+
+        // Tambahkan pekerjaan ke queue
+        await topUpQueue.add({ userId, amount: parseInt(currentAmount), uniqueAmount });
+
+        await ctx.reply('✅ Permintaan top-up Anda telah diterima dan segera menyelesaikan transaksi.', { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('❌ Gagal mengirim QRIS:', error);
+        await ctx.reply('❌ Gagal mengirim QRIS. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+      }
+      return;
+    } else {
+      if (currentAmount.length < 12) {
+        currentAmount += data;
+      } else {
+        return await ctx.answerCbQuery('⚠️ Jumlah maksimal adalah 12 digit!', { show_alert: true });
+      }
+    }
+
+    global.depositState[userId].amount = currentAmount;
+    const newMessage = `*Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda [Minimal 10.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
+    if (newMessage !== ctx.callbackQuery.message.text) {
+      await ctx.editMessageText(newMessage, {
+        reply_markup: { inline_keyboard: keyboard_nomor() },
+        parse_mode: 'Markdown',
+      });
+    }
+  }
+});
+
 
 
 bot.action(/edit_harga_(\d+)/, async (ctx) => {
@@ -2537,87 +2822,63 @@ async function updateServerField(serverId, value, query) {
 global.depositState = {};
 let lastRequestTime = 0;
 const requestInterval = 1000; 
-async function processDeposit(ctx, amount) {
-  const currentTime = Date.now();
 
-  if (currentTime - lastRequestTime < requestInterval) {
-    return ctx.reply('⚠️ *Terlalu banyak permintaan. Silakan tunggu sebentar sebelum mencoba lagi.*', { parse_mode: 'Markdown' });
-  }
-
-  lastRequestTime = currentTime;
-  const userId = ctx.from.id;
-  const username = await getUsernameById(userId); // Ambil username menggunakan fungsi yang sudah diperbaiki
-
-  // Buat nominal unik (2 angka random di belakang jumlah utama)
-  const randomSuffix = Math.floor(10 + Math.random() * 90); // Angka random 10-99
-  const uniqueAmount = parseInt(amount) + randomSuffix; // Misalnya 200 jadi 231
-
-  // Simpan permintaan deposit
-  global.depositState[userId] = { uniqueAmount, userId };
+topUpQueue.process(async (job) => {
+  const { userId, amount, uniqueAmount } = job.data;
 
   try {
-    // Kirim QRIS Pembayaran dengan nominal unik
-    await ctx.replyWithPhoto({ source: './qris.png' }, {
-      caption: `
-        ────────────────────────────
-            ✧*Iɴғᴏʀᴍᴀsɪ Dᴇᴘᴏsɪᴛ Aɴᴅᴀ*✧
- ────────────────────────────  
-                *𝙅𝙐𝙈𝙇𝘼𝙃 𝙋𝙀𝙈𝘽𝘼𝙔𝘼𝙍𝘼𝙉*
-                              Rp ${uniqueAmount}
- ────────────────────────────
- *𝘔𝘰𝘩𝘰𝘯 SCAN QR DI ATAS 𝘚𝘦𝘣𝘦𝘭𝘶𝘮 𝟑 𝘔𝘦𝘯𝘪𝘵 𝘥𝘦𝘯𝘨𝘢𝘯 𝘯𝘰𝘮𝘪𝘯𝘢𝘭 𝘺𝘢𝘯𝘨 𝘵𝘦𝘱𝘢𝘵 𝘢𝘨𝘢𝘳 𝘵𝘦𝘳𝘥𝘦𝘵𝘦𝘬𝘴𝘪 𝘰𝘵𝘰𝘮𝘢𝘵𝘪𝘴!*`,
-      parse_mode: 'Markdown'
-    });
+    console.log(`🔍 Memproses top-up untuk user ${userId} sebesar Rp${amount}`);
 
-    console.log(`🔍 User ${userId} diminta melakukan pembayaran QRIS sebesar Rp${uniqueAmount}`);
-
-    // Tunggu pembayaran masuk selama 5 menit
     let pembayaranDiterima = false;
-    const timeout = Date.now() + 150000; // 5 menit
+    const timeout = Date.now() + 180000; // 3 menit
 
     while (Date.now() < timeout) {
       const transaksi = await cekMutasi(uniqueAmount);
       if (transaksi) {
         console.log(`✅ Pembayaran diterima dari ${transaksi.buyer_reff} sebesar ${transaksi.amount}`);
 
-        // Update saldo user setelah pembayaran diterima
+        // Hapus QR karena pembayaran diterima
+        await bot.telegram.deleteMessage(userId, global.depositState[userId].messageId);
+
         const userDbId = await getUserIdFromTelegram(userId);
         if (!userDbId) {
           console.error(`❌ User ID tidak ditemukan dalam database untuk Telegram ID: ${userId}`);
-          return await ctx.reply('❌ *Akun Anda tidak ditemukan dalam sistem kami.*', { parse_mode: 'Markdown' });
+          throw new Error('User ID tidak ditemukan dalam database');
         }
 
-        await updateUserSaldo(userDbId, parseInt(transaksi.amount)); // Memperbarui saldo berdasarkan ID di database
+        await updateUserSaldo(userDbId, parseInt(transaksi.amount));
         console.log(` Pengguna Ke ${userDbId} Melakukan Deposit Sebesar *Rp${transaksi.amount}*`);
 
-        await ctx.reply(`✅ *Pembayaran berhasil!* Saldo Anda telah ditambahkan sebesar *Rp${transaksi.amount}*`, { parse_mode: 'Markdown' });
+        // **Notifikasi ke pengguna**
+        await bot.telegram.sendMessage(userId, `
+──────────────────────
+ ⟨ STATUS TOPUP SUCCESS ⟩
+──────────────────────
+➥ *Saldo Ditambahkan:* Rp${transaksi.amount.toLocaleString('id-ID')}
+➥ *Kode Transaksi:* TRX-${Math.floor(100000 + Math.random() * 900000)}
+➥ *Total Pembayaran:* Rp${uniqueAmount.toLocaleString('id-ID')}
+➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}
+──────────────────────
+Terima kasih telah melakukan top-up di RyyStore!
+`, { parse_mode: 'Markdown' });
 
-        // Kirim notifikasi ke admin
-        const adminMessage = `💰 * ⟨ Status TopUp Success! ⟩*\n\n👤 *Username:* ${username}\n🆔 *User ID:* ${userId}\n💵 *Jumlah:* Rp${transaksi.amount}`;
-        await bot.telegram.sendMessage(ADMIN, adminMessage, { parse_mode: 'Markdown' });
-
-        // Kirim notifikasi ke grup
-        const groupMessage = `
+        // **Notifikasi ke admin**
+        const adminMessage = `
 ──────────────────────
 ⟨ STATUS TOPUP SUCCESS ⟩
 ──────────────────────
-➥ User  : [${username}](tg://user?id=${userId})
+➥ User  : [${ctx.from.username}](tg://user?id=${userId})
 ➥ Code  : TRx${Math.floor(1000 + Math.random() * 9000)} 
 ➥ TopUp : Rp${transaksi.amount}
 ➥ Pay   : Rp${uniqueAmount}
 ➥ Date  : ${new Date().toISOString().split('T')[0]} 
-║▌║▌║ - ║▌║▌║
-𝗖𝗢𝗡𝗧𝗔𝗖𝗧
-➥Hubungi @RyyStorevp1 / +6287767287284
-║▌║▌║ - ║▌║▌║
 ──────────────────────
-Notifikasi TopUp Telah Berhasil.
+Notifikasi TopUp Pengguna.
 `;
-        try {
-          await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
-        } catch (error) {
-          console.error('❌ Gagal mengirim notifikasi ke grup:', error.message);
-        }
+        await bot.telegram.sendMessage(ADMIN, adminMessage, { parse_mode: 'Markdown' });
+
+ // Contoh pemanggilan notifikasi top-up
+       await sendGroupNotificationTopup(username, userId, amount, uniqueAmount);
 
         pembayaranDiterima = true;
         break;
@@ -2629,20 +2890,18 @@ Notifikasi TopUp Telah Berhasil.
     if (!pembayaranDiterima) {
       console.log(`❌ Pembayaran tidak ditemukan untuk User ${userId}`);
 
-      // Kirim pesan ke pengguna bahwa pembayaran tidak ditemukan
-      await ctx.reply('❌ *Kami tidak menemukan pembayaran dalam 3 menit terakhir.* Jika sudah membayar, harap hubungi admin.', { parse_mode: 'Markdown' });
+      // Hapus QR setelah 3 menit jika pembayaran tidak ditemukan
+      await bot.telegram.deleteMessage(userId, global.depositState[userId].messageId);
+
+      await bot.telegram.sendMessage(userId, '❌ *Kami tidak menemukan pembayaran dalam 3 menit terakhir.* Jika sudah membayar, harap hubungi admin.', { parse_mode: 'Markdown' });
     }
-      await new Promise(resolve => setTimeout(resolve, 2000));
   } catch (error) {
     console.error('❌ Kesalahan saat memproses top-up saldo:', error);
-    await ctx.reply('❌ *Terjadi kesalahan saat memproses permintaan Anda.*', { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(userId, '❌ *Terjadi kesalahan saat memproses permintaan Anda.*', { parse_mode: 'Markdown' });
   } finally {
-    // Menghapus status deposit setelah proses selesai (baik gagal maupun berhasil)
     delete global.depositState[userId];
-      console.log('🔄 Restarting bot...');
-      process.exit(1); // Memicu restart oleh systemd
-    }
   }
+});
 
 
 // Fungsi untuk mengecek mutasi transaksi dari OkeConnect
@@ -2715,35 +2974,74 @@ function keyboard_abc() {
   return buttons;
 }
 
-function keyboard_nomor() {
-  const alphabet = '1234567890@';
-  const buttons = [];
-  for (let i = 0; i < alphabet.length; i += 3) {
-    const row = alphabet.slice(i, i + 3).split('').map(char => ({
-      text: char,
-      callback_data: char
-    }));
-    buttons.push(row);
+bot.action('send_main_menu', async (ctx) => {
+  console.log('Tombol Kembali ke Menu Utama diklik oleh:', ctx.from.id);
+
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
   }
-  buttons.push([{ text: '🔙 Hapus', callback_data: 'delete' }, { text: '✅ Konfirmasi', callback_data: 'confirm' }]);
-  buttons.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
-  return buttons;
+});
+function keyboard_nomor() {
+  const rows = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    [' ', '0', '⌫ Hapus'], // Spasi untuk menjaga posisi angka 0
+    ['✅ Konfirmasi'],
+    ['🔙 Kembali ke Menu Utama']
+  ];
+
+  return rows.map(row => row
+    .filter(text => text !== ' ') // Hapus elemen kosong agar tidak ada tombol kosong
+    .map(text => ({
+      text,
+      callback_data: text.replace('⌫ Hapus', 'delete')
+                         .replace('✅ Konfirmasi', 'confirm')
+                         .replace('🔙 Kembali ke Menu Utama', 'send_main_menu')
+    }))
+  );
 }
+
+
 
 function keyboard_full() {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789@';
   const buttons = [];
-  for (let i = 0; i < alphabet.length; i += 3) {
-    const row = alphabet.slice(i, i + 3).split('').map(char => ({
+  
+  // Membuat tombol dengan 4 karakter per baris
+  for (let i = 0; i < alphabet.length; i += 4) {
+    const row = alphabet.slice(i, i + 4).split('').map(char => ({
       text: char,
       callback_data: char
     }));
     buttons.push(row);
   }
-  buttons.push([{ text: '🔙 Hapus', callback_data: 'delete' }, { text: '✅ Konfirmasi', callback_data: 'confirm' }]);
-  buttons.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
+
+  // Tambahan tombol kontrol
+  buttons.push([
+    { text: '⌫ Hapus', callback_data: 'delete' },
+    { text: '✅ Konfirmasi', callback_data: 'confirm' }
+  ]);
+  buttons.push([
+    { text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }
+  ]);
+
   return buttons;
 }
+
 
 app.post('/callback/paydisini', async (req, res) => {
   console.log('Request body:', req.body); // Log untuk debugging
