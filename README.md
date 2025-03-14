@@ -9,6 +9,9 @@
 <pre><code>wget -q https://raw.githubusercontent.com/RyyStore/Nebotsell/main/start && chmod +x start && ./start nebotsell
 </code></pre>
 
+### INSTALL QUEUE
+<pre><code>wget -q https://raw.githubusercontent.com/RyyStore/Nebotsell/main/install-queue.sh -O install-queue.sh && chmod +x install-queue.sh && ./install-queue.sh</code></pre>
+
 ### TESTED ON OS 
 - UBUNTU 20.04 22 24.04 24.10
 - DEBIAN 10 11 12
