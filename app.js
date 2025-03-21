@@ -4,6 +4,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { Telegraf, Scenes, session } = require('telegraf');
 const topUpQueue = require('./queue');
+const { initGenerateBug } = require('./generate');
 
 
 const app = express();
@@ -26,6 +27,8 @@ const GROUP_ID = "-1002397066993"; // Tambahkan grup ID di sini
 const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 180_000 
 });
+
+
 const adminIds = ADMIN;
 console.log('Bot initialized');
 
@@ -81,6 +84,8 @@ console.log('User state initialized');
 const userSessions = {}; // Simpan message_id terakhir untuk setiap user
 
 const userMessages = {}; // Menyimpan message_id terakhir untuk setiap user
+
+
 
 bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
@@ -207,53 +212,6 @@ async function getJumlahPengguna() {
   return 100; // Contoh nilai
 }
 
-
-async function checkAndAddBonusSaldo(userId) {
-  try {
-    const user = await new Promise((resolve, reject) => {
-      db.get('SELECT transaction_count, last_transaction_date FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
-
-    if (!user) {
-      console.error('🚫 Pengguna tidak ditemukan.');
-      return;
-    }
-
-    const { transaction_count, last_transaction_date } = user;
-
-    // Hitung selisih hari sejak transaksi terakhir
-    const currentDate = new Date();
-    const lastTransactionDate = new Date(last_transaction_date);
-    const diffTime = currentDate - lastTransactionDate;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Selisih dalam hari
-
-    // Jika dalam 30 hari dan transaksi >= 10, berikan bonus saldo
-    if (diffDays <= 30 && transaction_count >= 10) {
-      const bonusAmount = 10000; // Bonus saldo 10.000
-      await updateUserSaldo(userId, bonusAmount);
-
-      console.log(`✅ Bonus saldo sebesar Rp${bonusAmount} diberikan ke pengguna ${userId}.`);
-
-      // Kirim notifikasi ke pengguna
-      await bot.telegram.sendMessage(userId, `🎉 Selamat! Anda mendapatkan bonus saldo sebesar Rp${bonusAmount} karena telah menyelesaikan 10 transaksi dalam 30 hari.`, { parse_mode: 'Markdown' });
-
-      // Reset jumlah transaksi
-      db.run('UPDATE users SET transaction_count = 0 WHERE user_id = ?', [userId], (err) => {
-        if (err) {
-          console.error('🚫 Gagal mereset jumlah transaksi:', err.message);
-        }
-      });
-    }
-  } catch (error) {
-    console.error('🚫 Gagal memeriksa dan menambahkan bonus saldo:', error);
-  }
-}
 
 // Fungsi untuk memeriksa dan mengupdate role pengguna berdasarkan transaksi
 async function checkAndUpdateUserRole(userId) {
@@ -443,32 +401,6 @@ async function checkAndDowngradeReseller(userId) {
   }
 }
 
-async function handlePurchase(userId, amount) {
-  try {
-    // Kurangi saldo pengguna
-    await updateUserSaldo(userId, -amount);
-
-    // Catat transaksi pengurangan saldo sebagai pembuatan akun
-    const currentDate = new Date().toISOString();
-    db.run(
-      'INSERT INTO transactions (user_id, amount, transaction_type, transaction_date) VALUES (?, ?, ?, ?)',
-      [userId, amount, 'create_account', currentDate],
-      (err) => {
-        if (err) {
-          console.error('Error recording transaction:', err.message);
-        } else {
-          console.log(`Transaction recorded for user ${userId}`);
-        }
-      }
-    );
-
-    console.log(`✅ Pembelian berhasil diproses untuk user ${userId}.`);
-  } catch (error) {
-    console.error('🚫 Gagal memproses pembelian:', error);
-    throw error;
-  }
-}
-
 async function getServerList(userId) {
   const user = await new Promise((resolve, reject) => {
     db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
@@ -498,6 +430,9 @@ async function getServerList(userId) {
     harga: role === 'reseller' ? server.harga_reseller : server.harga
   }));
 }
+
+
+
 bot.command('admin', async (ctx) => {
   console.log('Admin menu requested');
   
@@ -733,6 +668,7 @@ bot.command('changerole', async (ctx) => {
     console.error('🚫 Gagal mengirim notifikasi ke pengguna:', error);
   }
 });
+
 
 // Command untuk admin melihat daftar pengguna
 bot.command('listusers', async (ctx) => {
@@ -1467,6 +1403,8 @@ bot.command('hapussaldo', async (ctx) => {
     });
   });
 });
+
+
 bot.command('edittotalcreate', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
@@ -1497,6 +1435,8 @@ bot.command('edittotalcreate', async (ctx) => {
       ctx.reply(`✅ Total create akun server \`${domain}\` berhasil diubah menjadi \`${total_create_akun}\`.`, { parse_mode: 'Markdown' });
   });
 });
+
+initGenerateBug(bot);
 
 async function handleServiceAction(ctx, action) {
   let keyboard;
@@ -1851,10 +1791,11 @@ bot.action(/(create|renew)_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, 
     await ctx.reply('👤 *Masukkan username:*', { parse_mode: 'Markdown' });
   });
 });
+
 bot.on('text', async (ctx) => {
   const state = userState[ctx.chat.id];
 
-  if (!state) return; 
+  if (!state) return;
 
   if (state.step.startsWith('username_')) {
     state.username = ctx.message.text.trim();
@@ -1923,7 +1864,7 @@ bot.on('text', async (ctx) => {
       const { username, password, exp, quota, iplimit, serverId, type, action } = state;
       let msg;
 
-      db.get('SELECT harga FROM Server WHERE id = ?', [serverId], async (err, server) => {
+      db.get('SELECT harga, harga_reseller FROM Server WHERE id = ?', [serverId], async (err, server) => {
         if (err) {
           console.error('⚠️ Error fetching server price:', err.message);
           return ctx.reply('🚫 *Terjadi kesalahan saat mengambil harga server.*', { parse_mode: 'Markdown' });
@@ -1933,8 +1874,9 @@ bot.on('text', async (ctx) => {
           return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
         }
 
-        const harga = server.harga;
-        const totalHarga = harga * state.exp; 
+        const userRole = await getUserRole(ctx.from.id);
+        const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
+        const totalHarga = hargaPerHari * exp;
 
         db.get('SELECT saldo FROM users WHERE user_id = ?', [ctx.from.id], async (err, user) => {
           if (err) {
@@ -1951,36 +1893,36 @@ bot.on('text', async (ctx) => {
           if (saldo < totalHarga) {
             return ctx.reply('🚫 *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
           }
-          // Contoh di bagian create_vmess, create_vless, create_trojan, create_shadowsocks, atau create_ssh
-if (action === 'create') {
-  if (type === 'vmess') {
-    msg = await createvmess(username, exp, quota, iplimit, serverId);
-  } else if (type === 'vless') {
-    msg = await createvless(username, exp, quota, iplimit, serverId);
-  } else if (type === 'trojan') {
-    msg = await createtrojan(username, exp, quota, iplimit, serverId);
-  } else if (type === 'shadowsocks') {
-    msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
-  } else if (type === 'ssh') {
-    msg = await createssh(username, password, exp, iplimit, serverId);
-  }
 
-  // Kirim notifikasi ke grup setelah akun berhasil dibuat
-  const server = await new Promise((resolve, reject) => {
-    db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(row);
-      }
-    });
-  });
+          // Kurangi saldo pengguna
+          db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
+            if (err) {
+              console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
+              return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
+            }
+          });
 
+          // Tambahkan total_create_akun
+          db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
+            if (err) {
+              console.error('⚠️ Kesalahan saat menambahkan total_create_akun:', err.message);
+              return ctx.reply('🚫 *Terjadi kesalahan saat menambahkan total_create_akun.*', { parse_mode: 'Markdown' });
+            }
+          });
 
-  if (server) {
-    await sendGroupNotificationPurchase(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
-  }
-}else if (action === 'renew') {
+          if (action === 'create') {
+            if (type === 'vmess') {
+              msg = await createvmess(username, exp, quota, iplimit, serverId);
+            } else if (type === 'vless') {
+              msg = await createvless(username, exp, quota, iplimit, serverId);
+            } else if (type === 'trojan') {
+              msg = await createtrojan(username, exp, quota, iplimit, serverId);
+            } else if (type === 'shadowsocks') {
+              msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
+            } else if (type === 'ssh') {
+              msg = await createssh(username, password, exp, iplimit, serverId);
+            }
+          } else if (action === 'renew') {
             if (type === 'vmess') {
               msg = await renewvmess(username, exp, quota, iplimit, serverId);
             } else if (type === 'vless') {
@@ -1993,20 +1935,21 @@ if (action === 'create') {
               msg = await renewssh(username, exp, iplimit, serverId);
             }
           }
-          // Kurangi saldo pengguna
-          db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
-            if (err) {
-              console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
-              return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
-            }
+
+          // Kirim notifikasi ke grup setelah akun berhasil dibuat
+          const server = await new Promise((resolve, reject) => {
+            db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve(row);
+              }
+            });
           });
-          // Tambahkan total_create_akun
-          db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
-            if (err) {
-              console.error('⚠️ Kesalahan saat menambahkan total_create_akun:', err.message);
-              return ctx.reply('🚫 *Terjadi kesalahan saat menambahkan total_create_akun.*', { parse_mode: 'Markdown' });
-            }
-          });
+
+          if (server) {
+            await sendGroupNotificationPurchase(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
+          }
 
           await ctx.reply(msg, { parse_mode: 'Markdown' });
           delete userState[ctx.chat.id];
@@ -2895,7 +2838,7 @@ bot.on('callback_query', async (ctx) => {
         if (currentAmount.length === 0) {
           return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
         }
-        if (parseInt(currentAmount) < 10000) {
+        if (parseInt(currentAmount) < 1) {
           return await ctx.answerCbQuery('⚠️ Jumlah minimal 10.000!', { show_alert: true });
         }
 
@@ -3180,31 +3123,6 @@ async function handleCekSaldoSemua(ctx, userId) {
   }
 }
 
-async function handleTopUp(userId, amount) {
-  try {
-    // Tambah saldo pengguna
-    await updateUserSaldo(userId, amount);
-
-    // Catat transaksi top-up
-    const currentDate = new Date().toISOString();
-    db.run(
-      'INSERT INTO transactions (user_id, amount, transaction_type, transaction_date) VALUES (?, ?, ?, ?)',
-      [userId, amount, 'topup', currentDate],
-      (err) => {
-        if (err) {
-          console.error('Error recording top-up transaction:', err.message);
-        } else {
-          console.log(`Top-up transaction recorded for user ${userId}`);
-        }
-      }
-    );
-
-    console.log(`✅ Top-up berhasil diproses untuk user ${userId}.`);
-  } catch (error) {
-    console.error('🚫 Gagal memproses top-up:', error);
-    throw error;
-  }
-}
 
 async function handleDepositState(ctx, userId, data) {
   let currentAmount = global.depositState[userId].amount;
@@ -3386,55 +3304,20 @@ async function handleEditField(ctx, userStateData, data, field, fieldName, query
     });
   }
 }
-async function updateUserSaldo(userId, amount) {
-  const currentDate = new Date().toISOString(); // Tanggal transaksi
-
-  try {
-    // Kurangi saldo pengguna
-    await new Promise((resolve, reject) => {
-      db.run(
-        'UPDATE users SET saldo = saldo - ? WHERE user_id = ?',
-        [amount, userId],
-        function (err) {
-          if (err) {
-            console.error('Error updating user saldo:', err.message);
-            reject(err);
-          } else {
-            console.log(`Saldo berhasil dikurangi untuk user ${userId}.`);
-            resolve();
-          }
-        }
-      );
+async function updateUserSaldo(userId, saldo) {
+  return new Promise((resolve, reject) => {
+    db.run('UPDATE Users SET saldo = saldo + ? WHERE id = ?', [saldo, userId], function (err) {
+      if (err) {
+        console.error('⚠️ Kesalahan saat menambahkan saldo user:', err.message);
+        reject(err);
+      } else {
+        resolve();
+	  console.log(`mendapatkana respon ${resolve} Saldo : ${saldo} User : ${userId}`)
+      }
     });
-
-    // Update jumlah transaksi dan tanggal transaksi terakhir
-    await new Promise((resolve, reject) => {
-      db.run(
-        'UPDATE users SET transaction_count = transaction_count + 1, last_transaction_date = ? WHERE user_id = ?',
-        [currentDate, userId],
-        function (err) {
-          if (err) {
-            console.error('Error updating transaction count:', err.message);
-            reject(err);
-          } else {
-            console.log(`Jumlah transaksi diupdate untuk user ${userId}.`);
-            resolve();
-          }
-        }
-      );
-    });
-
-    // Cek dan tambahkan bonus saldo jika memenuhi syarat
-    await checkAndAddBonusSaldo(userId);
-
-    // Cek dan downgrade reseller jika memenuhi syarat
-    await checkAndDowngradeReseller(userId);
-
-  } catch (error) {
-    console.error('🚫 Gagal mengupdate saldo:', error);
-    throw error;
-  }
+  });
 }
+
 
 async function updateServerField(serverId, value, query) {
   return new Promise((resolve, reject) => {
@@ -3725,6 +3608,8 @@ app.post('/callback/paydisini', async (req, res) => {
       return res.status(500).send('⚠️ Kesalahan saat memproses penambahan saldo');
   }
 });
+
+// Fungsi untuk memvalidasi link
 
 app.listen(port, () => {
     bot.launch().then(() => {
