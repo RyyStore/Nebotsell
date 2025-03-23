@@ -126,7 +126,10 @@ bot.command(['start', 'menu'], async (ctx) => {
     const keyboard = [
       [
         { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
+        ],
+        [
         { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
+        { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
       ],
       [
         { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
@@ -142,28 +145,30 @@ bot.command(['start', 'menu'], async (ctx) => {
     ];
 
     const messageText = `* ──────────────────────────
-          ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​ ≡
+               ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​ ≡
  ──────────────────────────
-                 ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                          
+               ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                       
  ──────────────────────────
-  Sᴇʟᴀᴍᴀᴛ Dᴀᴛᴀɴɢ *_${username}_*
- 𝙸𝙳 𝚊𝚗𝚍𝚊: *_${userId}_*
+  selamat Datang *_${username}_*
+ ID anda: *_${userId}_*
  ──────────────────────────
- 
 Jika sudah paham
 Bisa langsung ke MainMenu♻️
-
-🟩𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
+──────────────────────────
+🟢 𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
 𝙈𝙄𝙉𝙄𝙈𝘼𝙇 25000
-𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇✅
-
+𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇
 ──────────────────────────
 Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
-SGDO 🇸🇬    : 134/Hᴀʀɪ reseller
-INDO  🇮🇩    : 334/Hᴀʀɪ 
+SGDO 🇸🇬    : 134/Hari reseller
+SGDO 🇸🇬    : 267/Hari member
+INDO  🇮🇩    : 200/Hari reseller
+INDO  🇮🇩    : 334/Hari member
+
 ──────────────────────────
-๑۞๑ 𝗞𝗘𝗦𝗨𝗹𝗜𝗧𝗔𝗡❓𝘾𝙃𝘼𝙏 𝙊𝙒𝙉𝙀𝙍 @RyyStorevp1*
-   ☏ [WhatsApp](https://wa.me/6287767287284)
+๑۞๑ KESULITAN❓
+𝘾𝙃𝘼𝙏 𝙊𝙒𝙉𝙀𝙍 @RyyStorevp1*
+☏ [WhatsApp](https://wa.me/6287767287284)
  ──────────────────────────
 *Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
 
@@ -253,14 +258,41 @@ async function checkAndUpdateUserRole(userId) {
       const username = chat.username ? `@${chat.username}` : `User ID: ${userId}`;
 
       // **Kirim notifikasi ke pengguna**
-      await bot.telegram.sendMessage(userId, '🎉 Selamat! Anda sekarang menjadi reseller.', { parse_mode: 'Markdown' });
+      await bot.telegram.sendMessage(
+        userId,
+        `🎉 *Selamat! Anda sekarang menjadi reseller.*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
 
       // **Kirim notifikasi ke admin**
-      await bot.telegram.sendMessage(ADMIN, `🎉 Pengguna ${username} telah diupgrade menjadi reseller.`, { parse_mode: 'Markdown' });
+      await bot.telegram.sendMessage(
+        ADMIN,
+        `🎉 *Notifikasi Upgrade Reseller*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Username:* [${username}](tg://user?id=${userId})\n` +
+        `➥ *User ID:* ${userId}\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
 
       // **Kirim notifikasi ke grup**
-      const groupId = GROUP_ID; // Ganti dengan ID grup Telegram
-      await bot.telegram.sendMessage(groupId, `🎉 Pengguna ${username} telah diupgrade menjadi *reseller*!`, { parse_mode: 'Markdown' });
+      await bot.telegram.sendMessage(
+        GROUP_ID,
+        `🎉 *Notifikasi Upgrade Reseller*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Username:* [${username}](tg://user?id=${userId})\n` +
+        `➥ *User ID:* ${userId}\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
     }
   } catch (error) {
     console.error('🚫 Gagal memeriksa dan mengupdate role pengguna:', error);
@@ -481,6 +513,9 @@ bot.action('refresh_menu', async (ctx) => {
 
 
    async function sendMainMenu(ctx) {
+  const userId = ctx.from.id;
+  const isAdmin = adminIds.includes(userId);
+
   const keyboard = [
     [
       { text: 'CREATE AKUN', callback_data: 'service_create' },
@@ -493,6 +528,14 @@ bot.action('refresh_menu', async (ctx) => {
       { text: 'REFRESH', callback_data: 'refresh_menu' }
     ],
   ];
+
+  // Tambahkan tombol admin jika pengguna adalah admin
+  if (isAdmin) {
+    keyboard.push([
+      { text: 'ADMIN', callback_data: 'admin_menu' },
+      { text: 'CEK SALDO', callback_data: 'cek_saldo_semua' }
+    ]);
+  }
 
   const uptime = os.uptime();
   const days = Math.floor(uptime / (60 * 60 * 24));
@@ -530,7 +573,6 @@ bot.action('refresh_menu', async (ctx) => {
   }
 
   const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
-  const userId = ctx.from.id;
 
   // Ambil saldo dan role pengguna dari database
   let saldo = 0;
@@ -562,24 +604,19 @@ bot.action('refresh_menu', async (ctx) => {
  ──────────────────────────
  ᴋᴇᴍʙᴀʟɪ ᴋᴇ Dᴀsʜʙᴏᴀʀᴅ Tᴜᴛᴏʀɪᴀʟ:
 /menu   
- ──────────────────────────
- 
+──────────────────────────
 🟩𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
 𝙈𝙄𝙉𝙄𝙈𝘼𝙇 25000
-𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇✅
-                       
- ──────────────────────────
- 
-Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
-SGDO 🇸🇬    : 134/Hᴀʀɪ
-INDO  🇮🇩    : 334/Hᴀʀɪ
-
+𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇                     
 ──────────────────────────
-
+SGDO 🇸🇬    : 134/Hari reseller
+SGDO 🇸🇬    : 267/Hari member
+INDO  🇮🇩    : 200/Hari reseller
+INDO  🇮🇩    : 334/Hari member
+──────────────────────────
 Sᴇᴍᴜᴀ sᴇʀᴠᴇʀ Dɪᴊᴀᴍɪɴ Bᴇʀɢᴀʀᴀɴsɪ 
 Sᴇsᴜᴀɪ Dᴜʀᴀsɪ ʏᴀɴɢ ᴅɪᴘɪʟɪʜ
  𝙆𝙚𝙘𝙪𝙖𝙡𝙞 𝙈𝙚𝙡𝙖𝙣𝙜𝙜𝙖𝙧 𝘼𝙩𝙪𝙧𝙖𝙣
-  
  ──────────────────────────
 🏷️ *Status:* ${role === 'reseller' ? 'Reseller 🛒' : 'Member 👤'}
 ☁ *Sᴇʀᴠᴇʀ ᴛᴇʀsᴇᴅɪᴀ:* ${jumlahServer}
@@ -667,8 +704,23 @@ bot.command('changerole', async (ctx) => {
   } catch (error) {
     console.error('🚫 Gagal mengirim notifikasi ke pengguna:', error);
   }
-});
 
+  // Kirim notifikasi ke grup
+  const username = await getUsernameById(targetUserId);
+  const groupMessage = `🔄 *Notifikasi Perubahan Role*\n\n` +
+                       `➥ *Username:* [${username}](tg://user?id=${targetUserId})\n` +
+                       `➥ *User ID:* ${targetUserId}\n` +
+                       `➥ *Role Baru:* ${newRole}\n` +
+                       `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+                       `──────────────────────`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi perubahan role berhasil dikirim ke grup`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi ke grup:', error.message);
+  }
+});
 
 // Command untuk admin melihat daftar pengguna
 bot.command('listusers', async (ctx) => {
@@ -863,6 +915,26 @@ bot.action('main_menu', async (ctx) => {
   await sendMainMenu(ctx);
 });
 
+bot.action('admin_menu', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    await ctx.reply('🚫 Anda tidak memiliki izin untuk mengakses menu admin.');
+    return;
+  }
+
+  await sendAdminMenu(ctx);
+});
+
+bot.action('cek_saldo_semua', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    await ctx.reply('🚫 Anda tidak memiliki izin untuk melihat saldo semua pengguna.');
+    return;
+  }
+
+  await handleCekSaldoSemua(ctx, userId);
+});
+
 bot.action(/^broadcast_(\d+)_(.+)$/, async (ctx) => {
     const match = ctx.match;
     if (!match) return;
@@ -999,7 +1071,7 @@ bot.command('addsaldo', async (ctx) => {
 
       // Cek dan upgrade ke reseller jika saldo >= 25.000
       if (amount >= 25000) {
-        await checkAndUpdateUserRole(targetUserId, amount);
+        await checkAndUpdateUserRole(targetUserId);
       }
 
       // Notifikasi ke pengguna
@@ -1007,6 +1079,10 @@ bot.command('addsaldo', async (ctx) => {
 
       // Notifikasi ke admin
       await ctx.reply(`✅ Saldo sebesar Rp${amount} berhasil ditambahkan ke user dengan ID ${targetUserId}.`, { parse_mode: 'Markdown' });
+
+      // Notifikasi ke grup
+      const username = await getUsernameById(targetUserId);
+      await sendGroupNotificationTopup(username, targetUserId, amount, amount);
     });
   } catch (error) {
     console.error('🚫 Kesalahan saat menambahkan saldo:', error);
@@ -1537,7 +1613,7 @@ async function sendAdminMenu(ctx) {
       { text: 'ℹ️ Detail Server', callback_data: 'detailserver' }
     ],
     [
-      { text: '🔙 Kembali', callback_data: 'send_main_menu' }
+      { text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }
     ]
   ];
 
@@ -2838,7 +2914,7 @@ bot.on('callback_query', async (ctx) => {
         if (currentAmount.length === 0) {
           return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
         }
-        if (parseInt(currentAmount) < 1) {
+        if (parseInt(currentAmount) < 10000) {
           return await ctx.answerCbQuery('⚠️ Jumlah minimal 10.000!', { show_alert: true });
         }
 
@@ -3115,7 +3191,14 @@ async function handleCekSaldoSemua(ctx, userId) {
       message += `🆔 ID: ${user.user_id} | 💳 Saldo: Rp${user.saldo}\n`;
     });
 
-    await ctx.reply(message, { parse_mode: 'Markdown' });
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }]
+        ]
+      }
+    });
 
   } catch (error) {
     console.error('🚫 Kesalahan saat mengambil saldo semua user:', error);

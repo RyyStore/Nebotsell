@@ -4,6 +4,8 @@ const sqlite3 = require('sqlite3').verbose();
 
 // Inisialisasi database
 const db = new sqlite3.Database('./sellvpn.db');
+// Impor fungsi sendMainMenu dari file mainMenu.js
+const { sendMainMenu } = require('./app');
 
 // Inisialisasi state
 const userState = {};
@@ -94,6 +96,112 @@ function getUUID(link) {
     }
 }
 
+// Helper function untuk convert ke YAML dengan bug
+// Helper function untuk convert ke YAML dengan bug
+// Helper function untuk convert ke YAML dengan bug
+function convertToYAML(link, bugAddress, bugSubdomain, fallbackUsername = 'Unnamed') {
+    try {
+        let yamlConfig = 'Format tidak didukung untuk konversi YAML.';
+
+        // Ambil username dari bagian setelah # di link (untuk Trojan dan VLESS)
+        const usernameFromLink = link.split('#')[1] || fallbackUsername;
+
+        if (link.startsWith('vmess://')) {
+            const base64Data = link.replace('vmess://', '');
+            const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
+            const config = JSON.parse(decodedData);
+
+            // Ganti server dengan bugAddress
+            config.add = bugAddress;
+
+            // Jika ada bugSubdomain, ganti host
+            if (bugSubdomain) {
+                const originalHost = config.host || config.add;
+                const domainParts = originalHost.split('.');
+                const mainDomain = domainParts.slice(-2).join('.');
+                config.host = `${bugSubdomain}.${mainDomain}`;
+            }
+
+            // Ambil name dari config.ps atau fallbackUsername
+            const name = config.ps || fallbackUsername;
+
+            yamlConfig = `proxies:
+  - name: ${name}
+    server: ${config.add}
+    port: ${config.port}
+    type: vmess
+    uuid: ${config.id}
+    alterId: ${config.aid}
+    cipher: auto
+    tls: ${config.tls ? 'true' : 'false'}
+    network: ${config.net}
+    ws-opts:
+      path: ${config.path || '/'}
+      headers:
+        Host: ${config.host || config.add}
+    udp: true`;
+        } else if (link.startsWith('trojan://')) {
+            // Parsing link Trojan
+            const url = new URL(link);
+            const password = url.username; // Password adalah username di URL
+            const server = bugAddress; // Gunakan bugAddress sebagai server
+            const port = url.port || 443; // Port default 443 jika tidak ada
+            const sni = url.searchParams.get('sni') || server; // SNI default ke server
+            const path = url.searchParams.get('path') || '/'; // Path default ke /
+
+            // Jika ada bugSubdomain, sesuaikan SNI dan host
+            const finalSNI = bugSubdomain ? `${bugSubdomain}.${sni.split('.').slice(-2).join('.')}` : sni;
+
+            yamlConfig = `proxies:
+  - name: ${usernameFromLink}
+    server: ${server}
+    port: ${port}
+    type: trojan
+    password: ${password}
+    skip-cert-verify: true
+    sni: ${finalSNI}
+    network: ws
+    ws-opts:
+      path: ${path}
+      headers:
+        Host: ${finalSNI}
+    udp: true`;
+        } else if (link.startsWith('vless://')) {
+            // Parsing link VLESS
+            const url = new URL(link);
+            const uuid = url.username; // UUID adalah username di URL
+            const server = bugAddress; // Gunakan bugAddress sebagai server
+            const port = url.port || 443; // Port default 443 jika tidak ada
+            const sni = url.searchParams.get('sni') || server; // SNI default ke server
+            const type = url.searchParams.get('type') || 'ws'; // Type default ke ws
+            const path = url.searchParams.get('path') || '/'; // Path default ke /
+
+            // Jika ada bugSubdomain, sesuaikan SNI dan host
+            const finalSNI = bugSubdomain ? `${bugSubdomain}.${sni.split('.').slice(-2).join('.')}` : sni;
+
+            yamlConfig = `proxies:
+  - name: ${usernameFromLink}
+    server: ${server}
+    port: ${port}
+    type: vless
+    uuid: ${uuid}
+    tls: true
+    servername: ${finalSNI}
+    network: ${type}
+    ws-opts:
+      path: ${path}
+      headers:
+        Host: ${finalSNI}
+    udp: true`;
+        }
+
+        return yamlConfig;
+    } catch (error) {
+        console.error('Error converting to YAML:', error);
+        return 'Gagal mengonversi ke YAML.';
+    }
+}
+
 // Fungsi untuk mengambil role pengguna dari database
 async function getUserRole(userId) {
     return new Promise((resolve, reject) => {
@@ -109,23 +217,24 @@ async function getUserRole(userId) {
 }
 
 // Fungsi untuk mengirim notifikasi ke grup
-async function sendGroupNotification(bot, username, bugCode, linkType, userRole, date) {
+async function sendGroupNotification(bot, username, userId, bugCode, linkType, userRole, date, action = 'Generate Bug') {
     const message = `
 ──────────────────────
-  Convert Bug Berhasil
+  ${action} Berhasil
 ──────────────────────
-➥ User  : *@${username}*
-➥ Bug   : *${bugCode}*
-➥ Type  : *${linkType}*
-➥ Role  : *${userRole}*
-➥ Date  : *${date}*
-──────────────────────`;
+➥ *User  :* [${username}](tg://user?id=${userId})
+➥ *Bug   :*  ${bugCode}
+➥ *Type  :*  ${linkType}
+➥ *Role  :*  ${userRole}
+➥ *Date  :*  ${date}
+──────────────────────
+Notifikasi ${action} payVpn`;
 
     try {
         await bot.telegram.sendMessage(GROUP_ID, message, { parse_mode: 'Markdown' });
-        console.log('✅ Notifikasi berhasil dikirim ke grup.');
+        console.log(`✅ Notifikasi ${action} berhasil dikirim ke grup.`);
     } catch (error) {
-        console.error('🚫 Gagal mengirim notifikasi ke grup:', error.message);
+        console.error(`🚫 Gagal mengirim notifikasi ${action} ke grup:`, error.message);
     }
 }
 
@@ -142,21 +251,168 @@ function initGenerateBug(bot) {
             return ctx.reply('Link tidak valid. Silakan coba lagi.');
         }
 
-        // Simpan link ke state
-        userState[chatId] = { link, step: 'awaiting_bug' };
+        // Hapus pesan sebelumnya jika ada
+        if (userState[chatId]?.lastMessageId) {
+            try {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } catch (error) {
+                console.error('Gagal menghapus pesan sebelumnya:', error.message);
+            }
+        }
 
-        // Kirim pilihan bug
-        await ctx.reply('Link valid! Silakan pilih jenis bug:', {
+        // Simpan link ke state
+        userState[chatId] = { link, step: 'awaiting_action' };
+
+        // Kirim pilihan menu
+        const reply = await ctx.reply('Link valid! Silakan pilih opsi:', {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'XL VIDIO', callback_data: 'bug_vidio' }],
-                    [{ text: 'XL VIU', callback_data: 'bug_viu' }],
-                    [{ text: 'ILPED WC [bakrie]', callback_data: 'bug_ilpedWC' }],
-                    [{ text: 'XL VIP', callback_data: 'bug_vip' }],
-                    [{ text: 'BYU OPOK', callback_data: 'bug_byu' }]
+                    [{ text: 'Convert YAML', callback_data: 'convert_yaml' }],
+                    [{ text: 'Generate Bug', callback_data: 'generate_bug' }]
                 ]
             }
         });
+
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
+    });
+
+    // Handler untuk convert YAML
+    bot.action('convert_yaml', async (ctx) => {
+        const chatId = ctx.chat.id;
+        const link = userState[chatId]?.link;
+
+        if (!link) {
+            return ctx.reply('Silakan kirim ulang link.');
+        }
+
+        // Hapus pesan sebelumnya jika ada
+        if (userState[chatId]?.lastMessageId) {
+            try {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } catch (error) {
+                console.error('Gagal menghapus pesan sebelumnya:', error.message);
+            }
+        }
+
+        // Kirim pilihan bug untuk YAML
+        const reply = await ctx.reply('Silakan pilih jenis bug untuk YAML:', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'XL VIDIO', callback_data: 'yaml_bug_vidio [ quiz ]' }],
+                    [{ text: 'XL VIU', callback_data: 'yaml_bug_viu' }],
+                    [{ text: 'XL VIP', callback_data: 'yaml_bug_XL VIP [ 81 ]' }],
+                    [{ text: 'ILPED WC [bakrie]', callback_data: 'yaml_bug_ILPED WC [ Bakrie ]' }],
+                    [{ text: 'BYU OPOK', callback_data: 'yaml_bug_byu OPOK' }]
+                ]
+            }
+        });
+
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
+    });
+
+    // Handle callback query untuk memilih bug YAML
+    bot.action(/yaml_bug_(.+)/, async (ctx) => {
+        const chatId = ctx.chat.id;
+        const bugType = ctx.match[1];
+        const link = userState[chatId]?.link;
+
+        if (!link) {
+            await ctx.reply('Link tidak ditemukan. Silakan kirim link lagi.');
+            return;
+        }
+
+        let bugAddress, bugSubdomain;
+        switch (bugType) {
+            case 'vidio [ quiz ]':
+                bugAddress = 'quiz.vidio.com';
+                bugSubdomain = null;
+                break;
+            case 'viu':
+                bugAddress = 'zaintest.vuclip.com';
+                bugSubdomain = null;
+                break;
+            case 'XL VIP [ 81 ]':
+                bugAddress = '104.17.3.81';
+                bugSubdomain = null;
+                break;
+            case 'ILPED WC [ Bakrie ]':
+                bugAddress = 'bakrie.ac.id';
+                bugSubdomain = 'bakrie.ac.id';
+                break;
+            case 'byu OPOK':
+                bugAddress = 'space.byu.id';
+                bugSubdomain = null;
+                break;
+            default:
+                bugAddress = 'unknown.bug.com';
+                bugSubdomain = null;
+        }
+
+        // Hapus pesan sebelumnya jika ada
+        if (userState[chatId]?.lastMessageId) {
+            try {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } catch (error) {
+                console.error('Gagal menghapus pesan sebelumnya:', error.message);
+            }
+        }
+
+        // Konversi ke YAML dengan bug
+        const yamlConfig = convertToYAML(link, bugAddress, bugSubdomain, ctx.from.username);
+        const reply = await ctx.reply(`Hasil konversi YAML dengan bug ${bugType}:\n\`\`\`yaml\n${yamlConfig}\n\`\`\``, { parse_mode: 'Markdown' });
+
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
+
+        // Kirim notifikasi ke grup
+        const userRole = await getUserRole(ctx.from.id);
+        await sendGroupNotification(
+            bot,
+            ctx.from.username,
+            ctx.from.id,
+            bugType.toUpperCase(),
+            getLinkType(link),
+            userRole,
+            new Date().toLocaleDateString(),
+            'Convert YAML'
+        );
+    });
+
+    // Handler untuk Generate Bug
+    bot.action('generate_bug', async (ctx) => {
+        const chatId = ctx.chat.id;
+        const link = userState[chatId]?.link;
+
+        if (!link) {
+            return ctx.reply('Silakan kirim ulang link.');
+        }
+
+        // Hapus pesan sebelumnya jika ada
+        if (userState[chatId]?.lastMessageId) {
+            try {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } catch (error) {
+                console.error('Gagal menghapus pesan sebelumnya:', error.message);
+            }
+        }
+
+        // Kirim pilihan bug
+        const reply = await ctx.reply('Silakan pilih jenis bug:', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'XL VIDIO', callback_data: 'bug_vidio [ quiz ]' }],
+                    [{ text: 'XL VIU', callback_data: 'bug_viu' }],
+                    [{ text: 'XL VIP', callback_data: 'bug_XL VIP [ 81 ]' }],
+                    [{ text: 'ILPED WC [bakrie]', callback_data: 'bug_ILPED WC [ Bakrie ]' }],
+                    [{ text: 'BYU OPOK', callback_data: 'bug_byu OPOK' }]
+                ]
+            }
+        });
+
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
     });
 
     // Handle callback query untuk memilih bug
@@ -172,7 +428,7 @@ function initGenerateBug(bot) {
 
         let bugAddress, bugSubdomain;
         switch (bugType) {
-            case 'vidio':
+            case 'vidio [ quiz ]':
                 bugAddress = 'quiz.vidio.com';
                 bugSubdomain = null;
                 break;
@@ -180,15 +436,15 @@ function initGenerateBug(bot) {
                 bugAddress = 'zaintest.vuclip.com';
                 bugSubdomain = null;
                 break;
-            case 'vip':
+            case 'XL VIP [ 81 ]':
                 bugAddress = '104.17.3.81';
                 bugSubdomain = null;
                 break;
-            case 'ilpedWC':
+            case 'ILPED WC [ Bakrie ]':
                 bugAddress = 'bakrie.ac.id';
                 bugSubdomain = 'bakrie.ac.id';
                 break;
-            case 'byu':
+            case 'byu OPOK':
                 bugAddress = 'space.byu.id';
                 bugSubdomain = null;
                 break;
@@ -197,12 +453,21 @@ function initGenerateBug(bot) {
                 bugSubdomain = null;
         }
 
+        // Hapus pesan sebelumnya jika ada
+        if (userState[chatId]?.lastMessageId) {
+            try {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } catch (error) {
+                console.error('Gagal menghapus pesan sebelumnya:', error.message);
+            }
+        }
+
         const newLink = generateBugLink(link, bugAddress, bugSubdomain);
         if (newLink) {
             // Ambil role pengguna dari database
             const userRole = await getUserRole(ctx.from.id);
 
-            await ctx.reply(`──────────────────────
+            const reply = await ctx.reply(`──────────────────────
  Convert Bug Berhasil
 ──────────────────────
 ➥  Code : *${bugType.toUpperCase()}*
@@ -217,22 +482,20 @@ function initGenerateBug(bot) {
 ➥  Date : *${new Date().toLocaleDateString()}*
 ──────────────────────
  Convert By PayVpnBot
-──────────────────────`, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Salin Link', callback_data: 'copy_link' }]
-                    ]
-                }
+──────────────────────`, { parse_mode: 'Markdown'
             });
+
+            // Simpan message_id pesan terakhir
+            userState[chatId].lastMessageId = reply.message_id;
 
             // Kirim notifikasi ke grup
             await sendGroupNotification(
                 bot,
                 ctx.from.username,
+                ctx.from.id,
                 bugType.toUpperCase(),
                 getLinkType(link),
-                userRole, // Gunakan role yang diambil dari database
+                userRole,
                 new Date().toLocaleDateString()
             );
 
