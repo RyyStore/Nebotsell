@@ -62,15 +62,15 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE,
-  username TEXT,                            -- Kolom username ditambahkan di sini
+  username TEXT,
   saldo INTEGER DEFAULT 0,
   role TEXT DEFAULT 'member',
-  last_topup_date TEXT,                     -- Tanggal terakhir top-up
-  transaction_count INTEGER DEFAULT 0,      -- Jumlah transaksi dalam 30 hari terakhir
-  total_accounts_created INTEGER DEFAULT 0, -- Total akun yang dibuat
-  last_account_creation_date TEXT,          -- Tanggal terakhir membuat akun
-  last_transaction_date TEXT,               -- Tanggal transaksi terakhir (ditambahkan)
-  accounts_created_30days INTEGER DEFAULT 0, -- Jumlah akun dibuat dalam 30 hari terakhir
+  last_topup_date TEXT,
+  transaction_count INTEGER DEFAULT 0,
+  total_accounts_created INTEGER DEFAULT 0,
+  last_account_creation_date TEXT,
+  last_transaction_date TEXT,
+  accounts_created_30days INTEGER DEFAULT 0,
   CONSTRAINT unique_user_id UNIQUE (user_id)
 )`, (err) => {
   if (err) {
@@ -79,6 +79,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
     console.log('Users table created or already exists');
   }
 });
+
 
 const userState = {};
 console.log('User state initialized');
