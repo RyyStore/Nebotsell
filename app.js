@@ -62,6 +62,7 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE,
+  username TEXT,                            -- Kolom username ditambahkan di sini
   saldo INTEGER DEFAULT 0,
   role TEXT DEFAULT 'member',
   last_topup_date TEXT,                     -- Tanggal terakhir top-up
@@ -69,6 +70,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
   total_accounts_created INTEGER DEFAULT 0, -- Total akun yang dibuat
   last_account_creation_date TEXT,          -- Tanggal terakhir membuat akun
   last_transaction_date TEXT,               -- Tanggal transaksi terakhir (ditambahkan)
+  accounts_created_30days INTEGER DEFAULT 0, -- Jumlah akun dibuat dalam 30 hari terakhir
   CONSTRAINT unique_user_id UNIQUE (user_id)
 )`, (err) => {
   if (err) {
@@ -91,9 +93,9 @@ bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
 
   const userId = ctx.from.id;
-  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
+  const username = ctx.from.username ? ctx.from.username : "Tidak ada username";
 
-  // **Hapus pesan lama jika ada**
+  // Hapus pesan lama jika ada
   if (userMessages[userId]) {
     try {
       await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]);
@@ -103,48 +105,64 @@ bot.command(['start', 'menu'], async (ctx) => {
     }
   }
 
-  // Ambil data dari database
-  db.get('SELECT * FROM users WHERE user_id = ?', [userId], async (err, row) => {
-    if (err) {
-      console.error('Kesalahan saat memeriksa user_id:', err.message);
-      return;
-    }
+  // Simpan atau update data pengguna
+  db.serialize(() => {
+       // Coba insert user baru, jika sudah ada, abaikan (INSERT OR IGNORE)
+       db.run(
+         'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
+         [userId, username],
+         (err) => {
+           if (err) {
+             console.error('Kesalahan saat menyimpan user:', err.message);
+           } else {
+             console.log(`User ID ${userId} berhasil disimpan atau sudah ada.`);
+           }
+         }
+       );
 
-    if (!row) {
-      db.run('INSERT INTO users (user_id) VALUES (?)', [userId], (err) => {
-        if (err) {
-          console.error('Kesalahan saat menyimpan user_id:', err.message);
-        } else {
-          console.log(`User ID ${userId} berhasil disimpan`);
-        }
-      });
-    }
+       // Update username jika NULL atau berbeda
+       db.run(
+         `UPDATE users 
+          SET username = ? 
+          WHERE user_id = ? 
+          AND (username IS NULL OR username != ?)`,
+         [username, userId, username],
+         (err) => {
+           if (err) {
+             console.error('Kesalahan saat mengupdate username:', err.message);
+           } else {
+             console.log(`Username untuk User ID ${userId} berhasil diupdate (jika diperlukan).`);
+           }
+         }
+       );
+     });
 
-    const jumlahServer = await getJumlahServer();
-    const jumlahPengguna = await getJumlahPengguna();
+  // Kirim pesan menu (seperti sebelumnya)
+  const jumlahServer = await getJumlahServer();
+  const jumlahPengguna = await getJumlahPengguna();
 
-    const keyboard = [
-      [
-        { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
-        ],
-        [
-        { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
-        { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
-      ],
-      [
-        { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
-        { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
-      ],
-      [
-        { text: 'GRUP TELEGRAM', url: 'https://t.me/RyyStoreevpn/1' },
-        { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' },
-      ],
-      [
-        { text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }
-      ]
-    ];
+  const keyboard = [
+    [
+      { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
+    ],
+    [
+      { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
+      { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
+    ],
+    [
+      { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
+      { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
+    ],
+    [
+      { text: 'GRUP TELEGRAM', url: 'https://t.me/RyyStoreevpn/1' },
+      { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' },
+    ],
+    [
+      { text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }
+    ]
+  ];
 
-    const messageText = `* ──────────────────────────
+  const messageText = `* ──────────────────────────
                ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​ ≡
  ──────────────────────────
                ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                       
@@ -167,26 +185,25 @@ INDO  🇮🇩    : 334/Hari member
 
 ──────────────────────────
 ๑۞๑ KESULITAN❓
-𝘾𝙃𝘼𝙏 𝙊𝙒𝙉𝙀𝙍 @RyyStorevp1*
+𝘾𝙃𝘼𝙏 𝙒𝙉𝙀𝙍 @RyyStorevp1*
 ☏ [WhatsApp](https://wa.me/6287767287284)
  ──────────────────────────
 *Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
 
-    try {
-      const sentMessage = await ctx.reply(messageText, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: keyboard
-        }
-      });
+  try {
+    const sentMessage = await ctx.reply(messageText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
 
-      // **Simpan message_id baru untuk nanti dihapus saat /menu dipanggil lagi**
-      userMessages[userId] = sentMessage.message_id;
-      console.log(`Pesan baru disimpan dengan ID: ${sentMessage.message_id}`);
-    } catch (error) {
-      console.error('Error saat mengirim menu utama:', error);
-    }
-  });
+    // Simpan message_id baru untuk nanti dihapus saat /menu dipanggil lagi
+    userMessages[userId] = sentMessage.message_id;
+    console.log(`Pesan baru disimpan dengan ID: ${sentMessage.message_id}`);
+  } catch (error) {
+    console.error('Error saat mengirim menu utama:', error);
+  }
 });
 
 async function getUserSaldo(userId) {
@@ -217,6 +234,77 @@ async function getJumlahPengguna() {
   return 100; // Contoh nilai
 }
 
+const resetAccountsCreated30Days = async () => {
+  try {
+    const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    await new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE users SET accounts_created_30days = 0 WHERE last_account_creation_date < DATE(?, "-30 days")',
+        [currentDate],
+        (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        }
+      );
+    });
+    console.log('✅ Total akun dalam 30 hari telah di-reset untuk pengguna yang memenuhi syarat.');
+  } catch (error) {
+    console.error('🚫 Gagal mereset total akun dalam 30 hari:', error);
+  }
+};
+
+// Jalankan reset setiap 24 jam (untuk memeriksa secara berkala)
+setInterval(resetAccountsCreated30Days, 24 * 60 * 60 * 1000);
+
+async function updateUserAccountCreation(userId) {
+  const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+
+  await new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE users SET accounts_created_30days = accounts_created_30days + 1, total_accounts_created = total_accounts_created + 1, last_account_creation_date = ? WHERE user_id = ?',
+      [currentDate, userId],
+      (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
+}
+
+
+
+async function getAccountCreationRanking() {
+  try {
+    const users = await new Promise((resolve, reject) => {
+      db.all(
+        'SELECT user_id, username, accounts_created_30days FROM users ORDER BY accounts_created_30days DESC LIMIT 3',
+        [],
+        (err, rows) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows);
+          }
+        }
+      );
+    });
+
+    if (users.length === 0) {
+      return null; // Tidak ada data ranking
+    }
+
+    return users;
+  } catch (error) {
+    console.error('🚫 Kesalahan saat mengambil data ranking:', error);
+    return null;
+  }
+}
 
 // Fungsi untuk memeriksa dan mengupdate role pengguna berdasarkan transaksi
 async function checkAndUpdateUserRole(userId) {
@@ -298,6 +386,7 @@ async function checkAndUpdateUserRole(userId) {
     console.error('🚫 Gagal memeriksa dan mengupdate role pengguna:', error);
   }
 }
+
 
 
 async function sendUserNotificationTopup(userId, amount, uniqueAmount) {
@@ -433,6 +522,7 @@ async function checkAndDowngradeReseller(userId) {
   }
 }
 
+
 async function getServerList(userId) {
   const user = await new Promise((resolve, reject) => {
     db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
@@ -529,26 +619,24 @@ bot.action('refresh_menu', async (ctx) => {
     ],
   ];
 
-  // Tambahkan tombol admin jika pengguna adalah admin
+  // Add admin buttons if user is admin
   if (isAdmin) {
     keyboard.push([
-      { text: 'ADMIN', callback_data: 'admin_menu' },
-      { text: 'CEK SALDO', callback_data: 'cek_saldo_semua' }
+      { text: '⚙️ ADMIN', callback_data: 'admin_menu' },
+      { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }
     ]);
   }
 
   const uptime = os.uptime();
   const days = Math.floor(uptime / (60 * 60 * 24));
 
+  // Get server count
   let jumlahServer = 0;
   try {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
+        if (err) reject(err);
+        else resolve(row);
       });
     });
     jumlahServer = row.count;
@@ -556,15 +644,13 @@ bot.action('refresh_menu', async (ctx) => {
     console.error('Kesalahan saat mengambil jumlah server:', err.message);
   }
 
+  // Get user count
   let jumlahPengguna = 0;
   try {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
+        if (err) reject(err);
+        else resolve(row);
       });
     });
     jumlahPengguna = row.count;
@@ -574,59 +660,85 @@ bot.action('refresh_menu', async (ctx) => {
 
   const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
 
-  // Ambil saldo dan role pengguna dari database
+  // Get user balance and role
   let saldo = 0;
-  let role = 'member'; // Default role adalah 'member'
+  let role = 'member'; // Default role is 'member'
   try {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
+        if (err) reject(err);
+        else resolve(row);
       });
     });
     if (row) {
       saldo = row.saldo;
-      role = row.role || 'member'; // Jika role tidak ada, default ke 'member'
+      role = row.role || 'member';
     }
   } catch (err) {
     console.error('Kesalahan saat mengambil saldo atau role pengguna:', err.message);
   }
 
-  // Tampilkan status role di messageText
-  const messageText = `* ──────────────────────────
-         ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​​ 🇻​​​​​🇵​​​​​🇳​ ≡
- ──────────────────────────
- Sᴇʟᴀᴍᴀᴛ Dᴀᴛᴀɴɢ *_${username}_*
- 𝙸𝙳 𝚊𝚗𝚍𝚊: *_${userId}_*
- ──────────────────────────
- ᴋᴇᴍʙᴀʟɪ ᴋᴇ Dᴀsʜʙᴏᴀʀᴅ Tᴜᴛᴏʀɪᴀʟ:
-/menu   
-──────────────────────────
-🟩𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
-𝙈𝙄𝙉𝙄𝙈𝘼𝙇 25000
-𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇                     
-──────────────────────────
-SGDO 🇸🇬    : 134/Hari reseller
-SGDO 🇸🇬    : 267/Hari member
-INDO  🇮🇩    : 200/Hari reseller
-INDO  🇮🇩    : 334/Hari member
-──────────────────────────
-Sᴇᴍᴜᴀ sᴇʀᴠᴇʀ Dɪᴊᴀᴍɪɴ Bᴇʀɢᴀʀᴀɴsɪ 
-Sᴇsᴜᴀɪ Dᴜʀᴀsɪ ʏᴀɴɢ ᴅɪᴘɪʟɪʜ
- 𝙆𝙚𝙘𝙪𝙖𝙡𝙞 𝙈𝙚𝙡𝙖𝙣𝙜𝙜𝙖𝙧 𝘼𝙩𝙪𝙧𝙖𝙣
- ──────────────────────────
-🏷️ *Status:* ${role === 'reseller' ? 'Reseller 🛒' : 'Member 👤'}
-☁ *Sᴇʀᴠᴇʀ ᴛᴇʀsᴇᴅɪᴀ:* ${jumlahServer}
-유 *Tᴏᴛᴀʟ Usᴇʀ:* ${jumlahPengguna}
-💳 *Sᴀʟᴅᴏ:* Rp${saldo}
-──────────────────────────
-๑۞๑ 𝙊𝙒𝙉𝙀𝙍 𝘽𝙊𝙏 @RyyStorevp1*
-   ☏ [WhatsApp](https://wa.me/6287767287284)
- ──────────────────────────
-*Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ*`;
+ // Get ranking data
+const ranking = await getAccountCreationRanking();
+let rankingText = '';
+if (ranking && ranking.length > 0) {
+  rankingText = ranking.map((user, index) => {
+    if (index === 0) return `🥇 ${user.username}: ${user.accounts_created_30days} akun`;
+    if (index === 1) return `🥈 ${user.username}: ${user.accounts_created_30days} akun`;
+    if (index === 2) return `🥉 ${user.username}: ${user.accounts_created_30days} akun`;
+    return `➥ ${user.username}: ${user.accounts_created_30days} akun`;
+  }).join('\n');
+} else {
+  rankingText = '⚠️ Tidak ada data ranking.';
+}
+
+
+  // Get total accounts in last 30 days and global
+  let totalAkun30Hari = 0;
+  let totalAkunGlobal = 0;
+  try {
+    const row = await new Promise((resolve, reject) => {
+      db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', [], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    totalAkun30Hari = row.total_30days || 0;
+    totalAkunGlobal = row.total_global || 0;
+  } catch (error) {
+    console.error('🚫 Kesalahan saat mengambil total akun:', error);
+  }
+
+  // Format balance with commas
+  const formattedSaldo = saldo.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  const messageText = `*⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+             ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​ ≡
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯*
+👋 *Selamat Datang* _${username}_
+🆔 *ID Anda:* \`${userId}\`
+⭕ *Status:* ${role === 'reseller' ? 'Reseller 🛍️ ' : '👤 Member'}
+💵 *Saldo Anda:* Rp ${formattedSaldo}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+ *Kembali ke Menu:* /menu
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📣 *INFO RESELLER*
+🟢 Minimal Topup: Rp 25.000
+🟢 Diskon 50% dari harga normal!
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+🌐 *Server Tersedia:* ${jumlahServer}
+👥 *Total Pengguna:* ${jumlahPengguna}
+📊 *Akun (30 Hari):* ${totalAkun30Hari}
+🌍 *Akun Global:* ${totalAkunGlobal}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+🏆 *TOP 3 CREATE AKUN (30 HARI)*
+${rankingText}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+👨‍💻 *OWNER:* [@RyyStorevp1](https://t.me/RyyStorevp1)
+📱 *WhatsApp:* [Klik Disini](https://wa.me/6287767287284)
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+*Silakan pilih opsi layanan:*`;
 
   try {
     await ctx.reply(messageText, {
@@ -1799,35 +1911,34 @@ async function startSelectServer(ctx, action, type, page = 0) {
     // Tombol Kembali ke Menu Utama
     keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
 
-    // Format pesan list server
-    const serverList = currentServers.map(server => {
-      const hargaPer30Hari = server.harga * 30;
-      const isFull = server.total_create_akun >= server.batas_create_akun;
-      return `🌍 *${server.nama_server}*\n` +
-             `💵 Harga per hari: Rp${server.harga}\n` +
-             `🏷️ Harga per 30 hari: Rp${hargaPer30Hari}\n` +
-             `❇️ Quota: ${server.quota}GB\n` +
-             `🔐 Limit IP: ${server.iplimit} IP\n` +
-             (isFull ? `⚠️ *Server Penuh*` : `👥 Total Create Akun: ${server.total_create_akun}/${server.batas_create_akun}`) +  
-             `\n*──────────────────────*`;
-    }).join('\n\n');
+    // Format pesan list server dengan kotak dan tampilan yang rapi
+const serverList = currentServers.map(server => {
+    const hargaPer30Hari = server.harga * 30;
+    const isFull = server.total_create_akun >= server.batas_create_akun;
 
-    // Kirim pesan list server
-    if (ctx.updateType === 'callback_query') {
-      ctx.editMessageText(`📋 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`, {
-        reply_markup: {
-          inline_keyboard: keyboard
-        },
-        parse_mode: 'Markdown'
-      });
-    } else {
-      ctx.reply(`📋 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`, {
-        reply_markup: {
-          inline_keyboard: keyboard
-        },
-        parse_mode: 'Markdown'
-      });
-    }
+    return `┏━ 🚀 *${server.nama_server}* ━━
+┃ 💰 *Harga*: Rp${server.harga} / hari
+┃ 🏷️ *Harga 30H*: Rp${hargaPer30Hari}
+┃ 📦 *Quota*: ${server.quota}GB
+┃ 🔒 *Limit IP*: ${server.iplimit} IP
+┃ 👤 *Pengguna*: ${server.total_create_akun}/${server.batas_create_akun} ${isFull ? '❌' : '✅'}
+┗━━━━━━━━━━━━━━━━━━━━━━━━━`;
+}).join('\n\n');
+
+// Kirim pesan list server dengan tampilan kotak-kotak
+const messageText = `📌 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`;
+
+// Kirim pesan dalam 30 detik
+const sentMessage = await ctx.reply(messageText, {
+    reply_markup: { inline_keyboard: keyboard },
+    parse_mode: 'Markdown'
+});
+
+// Menghapus pesan setelah 30 detik
+setTimeout(() => {
+    ctx.deleteMessage(sentMessage.message_id);
+}, 30000);
+
 
     // Simpan state untuk navigasi
     userState[ctx.chat.id] = { step: `${action}_username_${type}`, page: currentPage };
@@ -1987,18 +2098,23 @@ bot.on('text', async (ctx) => {
           });
 
           if (action === 'create') {
-            if (type === 'vmess') {
-              msg = await createvmess(username, exp, quota, iplimit, serverId);
-            } else if (type === 'vless') {
-              msg = await createvless(username, exp, quota, iplimit, serverId);
-            } else if (type === 'trojan') {
-              msg = await createtrojan(username, exp, quota, iplimit, serverId);
-            } else if (type === 'shadowsocks') {
-              msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
-            } else if (type === 'ssh') {
-              msg = await createssh(username, password, exp, iplimit, serverId);
-            }
-          } else if (action === 'renew') {
+  if (type === 'vmess') {
+    msg = await createvmess(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'vless') {
+    msg = await createvless(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'trojan') {
+    msg = await createtrojan(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'shadowsocks') {
+    msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'ssh') {
+    msg = await createssh(username, password, exp, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  }
+}else if (action === 'renew') {
             if (type === 'vmess') {
               msg = await renewvmess(username, exp, quota, iplimit, serverId);
             } else if (type === 'vless') {
@@ -3173,7 +3289,7 @@ async function handleCekSaldoSemua(ctx, userId) {
 
   try {
     const users = await new Promise((resolve, reject) => {
-      db.all('SELECT user_id, saldo FROM users', [], (err, rows) => {
+      db.all('SELECT user_id, saldo FROM users WHERE saldo > 0 ORDER BY saldo DESC', [], (err, rows) => {
         if (err) {
           console.error('🚫 Kesalahan saat mengambil data saldo semua user:', err.message);
           return reject('🚫 *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
@@ -3182,16 +3298,26 @@ async function handleCekSaldoSemua(ctx, userId) {
       });
     });
 
-    if (users.length === 0) {
-      return await ctx.reply('⚠️ *Belum ada pengguna yang memiliki saldo.*', { parse_mode: 'Markdown' });
+    if (!users || users.length === 0) {
+      return await ctx.editMessageText('⚠️ *Tidak ada pengguna dengan saldo lebih dari Rp0,00.*', { parse_mode: 'Markdown' });
     }
 
-    let message = '📊 *Saldo Semua Pengguna:*\n\n';
+    let message = '📊 *Saldo Pengguna dengan Saldo > 0:*\n\n';
+    message += '```\n'; // Awal format monospace
+    message += '┌──────────────┬─────────────────┐\n';
+    message += '│ 🆔 User ID   │ 💳 Saldo        │\n';
+    message += '├──────────────┼─────────────────┤\n';
+
     users.forEach(user => {
-      message += `🆔 ID: ${user.user_id} | 💳 Saldo: Rp${user.saldo}\n`;
+      let userId = user.user_id.toString().padEnd(12);
+      let saldo = `Rp${user.saldo.toLocaleString('id-ID')},00`.padStart(15);
+      message += `│ ${userId} │ ${saldo} │\n`;
     });
 
-    await ctx.reply(message, {
+    message += '└──────────────┴─────────────────┘\n';
+    message += '```\n'; // Akhir format monospace
+
+    await ctx.editMessageText(message, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -3202,9 +3328,30 @@ async function handleCekSaldoSemua(ctx, userId) {
 
   } catch (error) {
     console.error('🚫 Kesalahan saat mengambil saldo semua user:', error);
-    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
+    await ctx.reply(`🚫 *Terjadi kesalahan:* ${error.message}`, { parse_mode: 'Markdown' });
   }
 }
+
+// Handler tombol kembali ke menu utama dengan transisi halus
+bot.action('send_main_menu', async (ctx) => {
+  try {
+    await ctx.editMessageText('🔄 *Kembali ke menu utama...*', { parse_mode: 'Markdown' });
+    setTimeout(async () => {
+      await ctx.editMessageText('📌 *Main Menu:*', {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔍 Cek Saldo', callback_data: 'cek_saldo' }],
+            [{ text: '⚙️ Pengaturan', callback_data: 'settings' }]
+          ]
+        }
+      });
+    }, 1000); // Delay 1 detik untuk efek transisi
+  } catch (error) {
+    console.error('🚫 Error saat kembali ke main menu:', error);
+  }
+});
+
 
 
 async function handleDepositState(ctx, userId, data) {
