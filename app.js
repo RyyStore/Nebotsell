@@ -190,7 +190,7 @@ INDO  🇮🇩    : 334/Hari member
 
 ──────────────────────────
 ๑۞๑ KESULITAN❓
-*𝘾𝙃𝘼𝙏 𝙒𝙉𝙀𝙍 @RyyStorevp1*
+*𝘾𝙃𝘼𝙏 O𝙒𝙉𝙀𝙍 @RyyStorevp1*
 ☏ [WhatsApp](https://wa.me/6287767287284)
  ──────────────────────────
 *Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
@@ -613,10 +613,8 @@ bot.action('refresh_menu', async (ctx) => {
 
   const keyboard = [
     [
-      { text: 'CREATE TRIAL', callback_data: 'service_trial' },
-    ],
-    [
       { text: 'CREATE AKUN', callback_data: 'service_create' },
+      { text: 'CREATE TRIAL', callback_data: 'service_trial' },
       { text: 'RENEW AKUN', callback_data: 'service_renew' }
     ],
     [
@@ -721,29 +719,31 @@ if (ranking && ranking.length > 0) {
   const formattedSaldo = saldo.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
 const messageText = `
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-             ≡ <b>RYY STORE</b> ≡
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+                ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​</b> ≡
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 👋 <b>Selamat Datang</b> <i>${username}</i>
 🆔 <b>ID Anda:</b> <code>${userId}</code>
 ⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}
-💵 <b>Saldo Anda:</b> Rp ${formattedSaldo}
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+ <blockquote><b>Saldo Anda:</b> Rp ${formattedSaldo}</blockquote>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 📣 <b>INFO RESELLER</b>
 🟢 Minimal Topup: Rp 25.000
 🟢 Diskon 50% dari harga normal!
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<blockquote><b>❇️TRIAL 5X DALAM SEHARI</b></blockquote>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 🌐 <b>Server Tersedia:</b> ${jumlahServer}
 👥 <b>Total Pengguna:</b> ${jumlahPengguna}
 📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}
 🌍 <b>Akun Global:</b> ${totalAkunGlobal}
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b>
 ${rankingText}
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b>CHAT WNER @RyyStorevp1</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>CHAT OWNER @RyyStorevp1</b>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 
 Silakan pilih opsi layanan:
 `;
@@ -2097,9 +2097,9 @@ const ensureColumnsExist = async () => {
 };
 
 const getUserData = async (userId) => {
-  await ensureColumnsExist(); // Pastikan kolom sudah ada sebelum query
+  await ensureColumnsExist();
   return new Promise((resolve, reject) => {
-    db.get('SELECT trial_count, last_trial_date FROM users WHERE user_id = ?', [userId], (err, user) => {
+    db.get('SELECT trial_count, last_trial_date, role FROM users WHERE user_id = ?', [userId], (err, user) => {
       if (err) {
         console.error('⚠️ Kesalahan saat mengambil data user:', err.message);
         reject(err);
@@ -2130,6 +2130,7 @@ const updateTrialCount = (userId, today) => {
 async function processTrial(ctx, type, serverId) {
   const userId = ctx.from.id;
   const today = new Date().toISOString().split('T')[0];
+  const isAdmin = adminIds.includes(userId);
 
   try {
     let user = await getUserData(userId);
@@ -2155,7 +2156,8 @@ async function processTrial(ctx, type, serverId) {
       trialCount = user.trial_count;
     }
 
-    if (trialCount >= 5) {
+    // Skip limit check jika admin
+    if (!isAdmin && trialCount >= 5) {
       console.log(`User ${userId} telah mencapai batas trial hari ini.`);
       return ctx.reply('🚫 *Anda sudah mencapai batas maksimal trial hari ini (5 kali).*', { parse_mode: 'Markdown' });
     }
@@ -2176,8 +2178,47 @@ async function processTrial(ctx, type, serverId) {
       return ctx.reply('🚫 *Tipe trial tidak valid!*', { parse_mode: 'Markdown' });
     }
 
-    console.log(`Trial ${type} berhasil dibuat. Mengupdate database...`);
-    await updateTrialCount(userId, today);
+    // Jangan update trial count jika admin
+    if (!isAdmin) {
+      console.log(`Trial ${type} berhasil dibuat. Mengupdate database...`);
+      await updateTrialCount(userId, today);
+    }
+
+    // Dapatkan info server dan username untuk notifikasi
+    const server = await new Promise((resolve, reject) => {
+      db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+
+    const username = ctx.from.username ? `@${ctx.from.username}` : `User ID: ${userId}`;
+    
+    // Kirim notifikasi ke grup
+    if (server) {
+      const groupMessage = `
+──────────────────────
+            ⟨ TRIAL BOT ⟩
+──────────────────────
+➥ *Username* : [${username}](tg://user?id=${userId})
+➥ *User ID*  : ${userId}
+➥ *Role*     : ${isAdmin ? 'Admin 👑' : (user?.role === 'reseller' ? 'Reseller 🛒' : 'Member 👤')}
+──────────────────────
+➥ *Layanan*  : ${type.toUpperCase()}
+➥ *Server*   : ${server.nama_server}
+➥ *Masa Aktif* : 30 Menit
+➥ *Tanggal*  : ${new Date().toLocaleString('id-ID')}
+──────────────────────
+Notifikasi Trial 
+`;
+
+      try {
+        await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+        console.log(`✅ Notifikasi trial berhasil dikirim ke grup`);
+      } catch (error) {
+        console.error('🚫 Gagal mengirim notifikasi trial ke grup:', error.message);
+      }
+    }
 
     console.log(`Mengirim pesan hasil trial ke user...`);
     await ctx.reply(msg, { parse_mode: 'Markdown' });
