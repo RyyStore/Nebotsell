@@ -613,7 +613,9 @@ bot.action('refresh_menu', async (ctx) => {
 
   const keyboard = [
     [
-      { text: 'CREATE AKUN', callback_data: 'service_create' },
+      { text: 'CREATE AKUN', callback_data: 'service_create' }
+      ],
+      [
       { text: 'CREATE TRIAL', callback_data: 'service_trial' },
       { text: 'RENEW AKUN', callback_data: 'service_renew' }
     ],
@@ -738,8 +740,8 @@ const messageText = `
 📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}
 🌍 <b>Akun Global:</b> ${totalAkunGlobal}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b>
-${rankingText}
+<blockquote>🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b>
+${rankingText}</blockquote>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 <b>CHAT OWNER @RyyStorevp1</b>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
