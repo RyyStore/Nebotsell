@@ -41,6 +41,14 @@ const db = new sqlite3.Database('./sellvpn.db', (err) => {
   }
 });
 
+// Fungsi untuk membulatkan harga khusus 30 hari
+function calculatePrice(hargaPerHari, expDays) {
+  if (expDays === 30) {
+    return Math.floor((hargaPerHari * 30) / 100) * 100; // Bulatkan ke kelipatan 100
+  }
+  return hargaPerHari * expDays; // Untuk masa aktif lain, hitung normal
+}
+
 db.run(`CREATE TABLE IF NOT EXISTS Server (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   domain TEXT,
@@ -98,7 +106,10 @@ bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
 
   const userId = ctx.from.id;
-  const username = ctx.from.username ? ctx.from.username : "Tidak ada username";
+  const username = ctx.from.username 
+  ? `<a href="tg://user?id=${userId}">${ctx.from.username}</a>` 
+  : `<a href="tg://user?id=${userId}">Pengguna</a>`;
+
 
   // Hapus pesan lama jika ada
   if (userMessages[userId]) {
@@ -112,92 +123,85 @@ bot.command(['start', 'menu'], async (ctx) => {
 
   // Simpan atau update data pengguna
   db.serialize(() => {
-       // Coba insert user baru, jika sudah ada, abaikan (INSERT OR IGNORE)
-       db.run(
-         'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
-         [userId, username],
-         (err) => {
-           if (err) {
-             console.error('Kesalahan saat menyimpan user:', err.message);
-           } else {
-             console.log(`User ID ${userId} berhasil disimpan atau sudah ada.`);
-           }
-         }
-       );
+    db.run(
+      'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
+      [userId, username],
+      (err) => {
+        if (err) {
+          console.error('Kesalahan saat menyimpan user:', err.message);
+        } else {
+          console.log(`User ID ${userId} berhasil disimpan atau sudah ada.`);
+        }
+      }
+    );
 
-       // Update username jika NULL atau berbeda
-       db.run(
-         `UPDATE users 
-          SET username = ? 
-          WHERE user_id = ? 
-          AND (username IS NULL OR username != ?)`,
-         [username, userId, username],
-         (err) => {
-           if (err) {
-             console.error('Kesalahan saat mengupdate username:', err.message);
-           } else {
-             console.log(`Username untuk User ID ${userId} berhasil diupdate (jika diperlukan).`);
-           }
-         }
-       );
-     });
+    db.run(
+      `UPDATE users 
+       SET username = ? 
+       WHERE user_id = ? 
+       AND (username IS NULL OR username != ?)`,
+      [username, userId, username],
+      (err) => {
+        if (err) {
+          console.error('Kesalahan saat mengupdate username:', err.message);
+        } else {
+          console.log(`Username untuk User ID ${userId} berhasil diupdate (jika diperlukan).`);
+        }
+      }
+    );
+  });
 
-  // Kirim pesan menu (seperti sebelumnya)
+  // Kirim pesan menu
   const jumlahServer = await getJumlahServer();
   const jumlahPengguna = await getJumlahPengguna();
 
   const keyboard = [
-    [
-      { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
-    ],
+    [{ text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' }],
     [
       { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
-      { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
+      { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' }
     ],
     [
       { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
-      { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
+      { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' }
     ],
     [
       { text: 'GRUP TELEGRAM', url: 'https://t.me/RyyStoreevpn/1' },
-      { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' },
+      { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' }
     ],
-    [
-      { text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }
-    ]
+    [{ text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }]
   ];
 
-  const messageText = `* ──────────────────────────
-               ≡🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​ ≡
- ──────────────────────────
-               ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                       
- ──────────────────────────*
-  selamat Datang *_${username}_*
- ID anda: *_${userId}_*
- ──────────────────────────
-Jika sudah paham
-Bisa langsung ke MainMenu♻️
-──────────────────────────
-🟢 𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
-𝙈𝙄𝙉𝙄𝙈𝘼𝙇 25000
-𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇
-──────────────────────────
-Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
-SGDO 🇸🇬    : 134/Hari reseller
-SGDO 🇸🇬    : 267/Hari member
-INDO  🇮🇩    : 200/Hari reseller
-INDO  🇮🇩    : 334/Hari member
-
-──────────────────────────
-๑۞๑ KESULITAN❓
-*𝘾𝙃𝘼𝙏 O𝙒𝙉𝙀𝙍 @RyyStorevp1*
-☏ [WhatsApp](https://wa.me/6287767287284)
- ──────────────────────────
-*Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
+  const messageText = `
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+               ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+               <b>⟨ DASHBOARD TUTORIAL ⟩</b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+👋 <b><code>Selamat Datang</code></b> <i>${username}</i>
+🆔 <b><code>ID Anda:</code></b> <code>${userId}</code>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b><code>Jika sudah paham, bisa langsung ke Main Menu</code></b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+🟢<b><code>Jika ingin menjadi reseller:</code></b>
+💰<b><code>Minimal Topup:</code></b><b><code>Rp 25.000</code></b>
+⚡<b><code>Diskon 50% dari harga normal!</code></b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b><code>SGDO</code></b> 🇸🇬: <b><code>134/Hari</code></b> <b><code>reseller</code></b>
+<b><code>SGDO</code></b> 🇸🇬: <b><code>267/Hari</code></b> <b><code>member</code></b>
+<b><code>INDO</code></b>  🇮🇩: <b><code>200/Hari</code></b> <b><code>reseller</code></b>
+<b><code>INDO</code></b>  🇮🇩: <b><code>334/Hari</code></b> <b><code>member</code></b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+📞 <b><code>KESULITAN?</code></b>
+👤 <b><code>Chat Owner:</code></b> <a href="tg://user?id=7251232303">RyyStore</a>
+☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>Silakan pilih opsi layanan:</b>
+`;
 
   try {
     const sentMessage = await ctx.reply(messageText, {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: keyboard
       }
@@ -210,6 +214,7 @@ INDO  🇮🇩    : 334/Hari member
     console.error('Error saat mengirim menu utama:', error);
   }
 });
+
 
 async function getUserSaldo(userId) {
   return new Promise((resolve, reject) => {
@@ -666,7 +671,10 @@ bot.action('refresh_menu', async (ctx) => {
     console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
   }
 
-  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
+  const username = ctx.from.username 
+  ? `<a href="tg://user?id=${userId}">${ctx.from.username}</a>` 
+  : `<a href="tg://user?id=${userId}">Pengguna</a>`;
+
 
   // Get user balance and role
   let saldo = 0;
@@ -724,29 +732,23 @@ const messageText = `
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
                 ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​</b> ≡
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-👋 <b>Selamat Datang</b> <i>${username}</i>
-🆔 <b>ID Anda:</b> <code>${userId}</code>
-⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}
- <blockquote><b>Saldo Anda:</b> Rp ${formattedSaldo}</blockquote>
+🌐 <b><code>Server Tersedia:</code></b> ${jumlahServer}
+👥 <b><code>Total Pengguna:</code></b> ${jumlahPengguna}
+📊 <b><code>Akun (30 Hari):</code></b> ${totalAkun30Hari}
+🌍 <b><code>Akun Global:</code></b> ${totalAkunGlobal}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-📣 <b>INFO RESELLER</b>
-🟢 Minimal Topup: Rp 25.000
-🟢 Diskon 50% dari harga normal!
+<blockquote><b><code>❇️TRIAL 5X DALAM SEHARI</code></b></blockquote>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<blockquote><b>❇️TRIAL 5X DALAM SEHARI</b></blockquote>
+👋 <b><code>Selamat Datang</code></b> <i>${username}</i>
+🆔 <b><code>ID Anda:</code></b><code>${userId}</code>
+⭕ <b><code>Status:</code></b><b><code>${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}</code></b><blockquote><b><code>SALDO ANDA:</code></b> Rp <code>${formattedSaldo}</code></blockquote>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-🌐 <b>Server Tersedia:</b> ${jumlahServer}
-👥 <b>Total Pengguna:</b> ${jumlahPengguna}
-📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}
-🌍 <b>Akun Global:</b> ${totalAkunGlobal}
+<blockquote>🏆 <b><code>TOP 3 CREATE AKUN (30 HARI)</code></b></blockquote>
+<code>${rankingText}</code>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<blockquote>🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b>
-${rankingText}</blockquote>
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b>CHAT OWNER @RyyStorevp1</b>
+<b><code>CHAT OWNER:</code></b> <a href="tg://user?id=7251232303">RyyStore</a>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-
 Silakan pilih opsi layanan:
 `;
 
@@ -1128,9 +1130,17 @@ async function sendGroupNotificationPurchase(username, userId, serviceType, serv
 
   // Tentukan harga berdasarkan role pengguna
   const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
-
-  // Hitung total harga berdasarkan masa aktif
-  const totalHarga = hargaPerHari * expDays; // Total harga = harga per hari * masa aktif
+  
+  // Hitung total harga
+  const totalHarga = calculatePrice(hargaPerHari, expDays);
+  
+  // Format tampilan harga
+  let hargaDisplay;
+  if (expDays === 30) {
+    hargaDisplay = `Rp${totalHarga.toLocaleString('id-ID')}`;
+  } else {
+    hargaDisplay = `Rp${totalHarga.toLocaleString('id-ID')} (${expDays} hari)`;
+  }
 
   // Format tanggal saat ini
   const currentDate = new Date().toLocaleString('id-ID');
@@ -1147,7 +1157,7 @@ THANKS TO
 ➥ Server : ${serverName}
 ➥ Harga per Hari : Rp${hargaPerHari.toLocaleString('id-ID')}
 ➥ Masa Aktif : ${expDays} Hari
-➥ Total Harga : Rp${totalHarga.toLocaleString('id-ID')}
+➥ Total Harga : ${hargaDisplay}
 ➥ Tanggal : ${currentDate}
 ──────────────────────
 Notifikasi Pembelian detail di bawah.
@@ -1340,32 +1350,51 @@ bot.command('addserver', async (ctx) => {
 bot.command('editharga', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
-      return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk perintah ini.', { parse_mode: 'Markdown' });
   }
 
   const args = ctx.message.text.split(' ');
-  if (args.length !== 3) {
-      return ctx.reply('⚠️ Format salah. Gunakan: `/editharga <domain> <harga>`', { parse_mode: 'Markdown' });
+  if (args.length < 3) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/editharga <server_id> <harga_member> <harga_reseller>`', { parse_mode: 'Markdown' });
   }
 
-  const [domain, harga] = args.slice(1);
+  const serverId = args[1];
+  const hargaMember = parseInt(args[2]);
+  const hargaReseller = args[3] ? parseInt(args[3]) : Math.floor(hargaMember * 0.5); // Diskon default 50%
 
-  if (!/^\d+$/.test(harga)) {
-      return ctx.reply('⚠️ `harga` harus berupa angka.', { parse_mode: 'Markdown' });
+  if (isNaN(hargaMember) || isNaN(hargaReseller)) {
+    return ctx.reply('⚠️ Harga harus angka.', { parse_mode: 'Markdown' });
   }
 
-  db.run("UPDATE Server SET harga = ? WHERE domain = ?", [parseInt(harga), domain], function(err) {
-      if (err) {
-          console.error('⚠️ Kesalahan saat mengedit harga server:', err.message);
-          return ctx.reply('⚠️ Kesalahan saat mengedit harga server.', { parse_mode: 'Markdown' });
-      }
+  if (hargaMember <= 0 || hargaReseller <= 0) {
+    return ctx.reply('⚠️ Harga harus lebih dari 0.', { parse_mode: 'Markdown' });
+  }
 
-      if (this.changes === 0) {
+  try {
+    db.run("UPDATE Server SET harga = ?, harga_reseller = ? WHERE id = ?", 
+      [hargaMember, hargaReseller, serverId], 
+      function(err) {
+        if (err) {
+          console.error('⚠️ Gagal edit harga:', err.message);
+          return ctx.reply('⚠️ Gagal mengubah harga server.', { parse_mode: 'Markdown' });
+        }
+
+        if (this.changes === 0) {
           return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
-      }
+        }
 
-      ctx.reply(`✅ Harga server \`${domain}\` berhasil diubah menjadi \`${harga}\`.`, { parse_mode: 'Markdown' });
-  });
+        ctx.reply(
+          `✅ Harga server berhasil diubah:\n` +
+          `- Harga Member: Rp${hargaMember.toLocaleString('id-ID')}\n` +
+          `- Harga Reseller: Rp${hargaReseller.toLocaleString('id-ID')}`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    );
+  } catch (error) {
+    console.error('🚫 Gagal edit harga:', error);
+    await ctx.reply('🚫 Gagal mengubah harga.', { parse_mode: 'Markdown' });
+  }
 });
 
 bot.command('editnama', async (ctx) => {
@@ -1930,9 +1959,7 @@ async function startSelectServer(ctx, action, type, page = 0) {
     const serversPerPage = 6;
     const totalPages = Math.ceil(servers.length / serversPerPage);
     const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
-    const start = currentPage * serversPerPage;
-    const end = start + serversPerPage;
-    const currentServers = servers.slice(start, end);
+    const currentServers = servers.slice(currentPage * serversPerPage, (currentPage + 1) * serversPerPage);
 
     const keyboard = [];
     for (let i = 0; i < currentServers.length; i += 2) {
@@ -1940,7 +1967,6 @@ async function startSelectServer(ctx, action, type, page = 0) {
       const server1 = currentServers[i];
       const server2 = currentServers[i + 1];
 
-      // Jika trial, gunakan callback khusus trial
       const server1Callback = action === 'trial' 
         ? `trial_${type}_${server1.id}` 
         : `${action}_username_${type}_${server1.id}`;
@@ -1951,7 +1977,6 @@ async function startSelectServer(ctx, action, type, page = 0) {
         const server2Callback = action === 'trial' 
           ? `trial_${type}_${server2.id}` 
           : `${action}_username_${type}_${server2.id}`;
-
         row.push({ text: `${server2.nama_server}`, callback_data: server2Callback });
       }
 
@@ -1972,35 +1997,38 @@ async function startSelectServer(ctx, action, type, page = 0) {
       keyboard.push(navButtons);
     }
 
-    // Tombol kembali ke menu utama
-    keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
+    // Tombol kembali ke menu protokol
+    keyboard.push([{ text: '🔙 Kembali', callback_data: `service_${action}` }]);
 
-    // Format pesan list server
-    const serverList = currentServers.map(server => {
-      const hargaPer30Hari = server.harga * 30;
-      const isFull = server.total_create_akun >= server.batas_create_akun;
+    // Di fungsi startSelectServer:
+const serverList = currentServers.map(server => {
+  const hargaPer30Hari = Math.floor((server.harga * 30) / 100) * 100;
+  const isFull = server.total_create_akun >= server.batas_create_akun;
 
-      return `┏━ 🚀 *${server.nama_server}* ━━
-┃ 💰 *Harga*: Rp${server.harga} / hari
-┃ 🏷️ *Harga 30H*: Rp${hargaPer30Hari}
+  return `┏━ 🚀 *${server.nama_server}* ━━
+┃ 💰 *Harga Harian*: Rp${server.harga}
+┃ 🏷️ *Harga 30 Hari*: Rp${hargaPer30Hari} 
 ┃ 📦 *Quota*: ${server.quota}GB
 ┃ 🔒 *Limit IP*: ${server.iplimit} IP
 ┃ 👤 *Pengguna*: ${server.total_create_akun}/${server.batas_create_akun} ${isFull ? '❌' : '✅'}
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━`;
-    }).join('\n\n');
+}).join('\n\n');
 
-    const messageText = `📌 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`;
+    const messageText = `📌 *List Server ${type.toUpperCase()} (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`;
 
-    // Kirim pesan
-    const sentMessage = await ctx.reply(messageText, {
-      reply_markup: { inline_keyboard: keyboard },
-      parse_mode: 'Markdown'
-    });
-
-    // Hapus pesan setelah 30 detik
-    setTimeout(() => {
-      ctx.deleteMessage(sentMessage.message_id);
-    }, 30000);
+    // Edit pesan yang ada daripada membuat yang baru
+    try {
+      await ctx.editMessageText(messageText, {
+        reply_markup: { inline_keyboard: keyboard },
+        parse_mode: 'Markdown'
+      });
+    } catch (error) {
+      // Jika edit gagal, kirim pesan baru (fallback)
+      await ctx.reply(messageText, {
+        reply_markup: { inline_keyboard: keyboard },
+        parse_mode: 'Markdown'
+      });
+    }
 
     // Simpan state hanya untuk create/renew (trial tidak perlu state)
     if (action !== 'trial') {
@@ -2304,43 +2332,46 @@ bot.on('text', async (ctx) => {
       const { username, password, exp, quota, iplimit, serverId, type, action } = state;
       let msg;
 
-      db.get('SELECT harga, harga_reseller FROM Server WHERE id = ?', [serverId], async (err, server) => {
-        if (err) {
-          console.error('⚠️ Error fetching server price:', err.message);
-          return ctx.reply('🚫 *Terjadi kesalahan saat mengambil harga server.*', { parse_mode: 'Markdown' });
-        }
+      // Dalam handler text (bagian yang memproses pem// Dalam handler text (bagian yang memproses pembuatan akun)
+db.get('SELECT harga, harga_reseller FROM Server WHERE id = ?', [serverId], async (err, server) => {
+  if (err) {
+    console.error('⚠️ Error fetching server price:', err.message);
+    return ctx.reply('🚫 *Terjadi kesalahan saat mengambil harga server.*', { parse_mode: 'Markdown' });
+  }
 
-        if (!server) {
-          return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
-        }
+  if (!server) {
+    return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
+  }
 
-        const userRole = await getUserRole(ctx.from.id);
-        const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
-        const totalHarga = hargaPerHari * exp;
+  const userRole = await getUserRole(ctx.from.id);
+  const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
+  
+  // Hitung total harga berdasarkan masa aktif
+  const totalHarga = calculatePrice(hargaPerHari, state.exp);
 
-        db.get('SELECT saldo FROM users WHERE user_id = ?', [ctx.from.id], async (err, user) => {
-          if (err) {
-            console.error('⚠️ Kesalahan saat mengambil saldo pengguna:', err.message);
-            return ctx.reply('🚫 *Terjadi kesalahan saat mengambil saldo pengguna.*', { parse_mode: 'Markdown' });
-          }
+  db.get('SELECT saldo FROM users WHERE user_id = ?', [ctx.from.id], async (err, user) => {
+    if (err) {
+      console.error('⚠️ Kesalahan saat mengambil saldo pengguna:', err.message);
+      return ctx.reply('🚫 *Terjadi kesalahan saat mengambil saldo pengguna.*', { parse_mode: 'Markdown' });
+    }
 
-          if (!user) {
-            return ctx.reply('🚫 *Pengguna tidak ditemukan.*', { parse_mode: 'Markdown' });
-          }
+    if (!user) {
+      return ctx.reply('🚫 *Pengguna tidak ditemukan.*', { parse_mode: 'Markdown' });
+    }
 
-          const saldo = user.saldo;
+    const saldo = user.saldo;
 
-          if (saldo < totalHarga) {
-            return ctx.reply('🚫 *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
-          }
+    if (saldo < totalHarga) {
+      return ctx.reply('🚫 *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
+    }
 
-          // Kurangi saldo pengguna
-          db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
-            if (err) {
-              console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
-              return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
-            }
-          });
+    // Kurangi saldo pengguna
+    db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
+      if (err) {
+        console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
+        return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
+      }
+    });
 
           // Tambahkan total_create_akun
           db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
