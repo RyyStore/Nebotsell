@@ -90,7 +90,11 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
     console.log('Users table created or already exists');
   }
 });
-
+// Tambahkan di awal kode (setelah koneksi database)
+db.run(`CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+)`);
 
 
 const userState = {};
@@ -215,6 +219,92 @@ bot.command(['start', 'menu'], async (ctx) => {
   }
 });
 
+async function checkAndDowngradeInactiveResellers() {
+  const now = new Date();
+  const currentDay = now.getDate();
+  
+  // Hanya berjalan tiap tanggal 1 jam 00:05
+  if (currentDay === 1 && now.getHours() === 0 && now.getMinutes() >= 5) {
+    try {
+      console.log('🔄 Memulai pengecekan reseller tidak aktif...');
+      
+      // Ambil semua reseller yang tidak memenuhi syarat
+      const inactiveResellers = await new Promise((resolve, reject) => {
+        db.all(`
+          SELECT user_id, username, last_account_creation_date, accounts_created_30days 
+          FROM users 
+          WHERE role = 'reseller' 
+            AND (
+              last_account_creation_date IS NULL 
+              OR julianday('now') - julianday(last_account_creation_date) > 30
+              OR accounts_created_30days < 5
+            )
+        `, [], (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        });
+      });
+
+      if (inactiveResellers.length === 0) {
+        console.log('✅ Tidak ada reseller yang perlu diturunkan');
+        return;
+      }
+
+      // Turunkan role setiap reseller tidak aktif
+      for (const reseller of inactiveResellers) {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `UPDATE users SET role = 'member' WHERE user_id = ?`,
+            [reseller.user_id],
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+
+        console.log(`✅ Reseller ${reseller.user_id} diturunkan ke member`);
+
+        // Kirim notifikasi ke user
+        try {
+          await bot.telegram.sendMessage(
+            reseller.user_id,
+            `⚠️ *Perubahan Status Reseller*\n\n` +
+            `Role Anda telah diturunkan menjadi member karena:\n` +
+            `- Tidak membuat akun dalam 30 hari terakhir\n` +
+            `ATAU\n` +
+            `- Membuat kurang dari 5 akun dalam 30 hari terakhir\n\n` +
+            `Anda bisa kembali menjadi reseller dengan topup minimal Rp25.000`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (error) {
+          console.error(`⚠️ Gagal kirim notifikasi ke user ${reseller.user_id}:`, error.message);
+        }
+
+        // Kirim notifikasi ke admin
+        try {
+          await bot.telegram.sendMessage(
+            ADMIN,
+            `⚠️ *Penurunan Role Reseller*\n\n` +
+            `User: ${reseller.username || reseller.user_id}\n` +
+            `ID: ${reseller.user_id}\n` +
+            `Alasan: ${reseller.last_account_creation_date ? 'Tidak aktif 30 hari' : 'Tidak pernah buat akun'}\n` +
+            `Akun dibuat 30 hari: ${reseller.accounts_created_30days}`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (error) {
+          console.error('⚠️ Gagal kirim notifikasi ke admin:', error.message);
+        }
+      }
+
+      console.log(`✅ ${inactiveResellers.length} reseller berhasil diturunkan`);
+      
+    } catch (error) {
+      console.error('❌ Gagal proses penurunan role:', error);
+    }
+  }
+}
+
 
 async function getUserSaldo(userId) {
   return new Promise((resolve, reject) => {
@@ -244,77 +334,122 @@ async function getJumlahPengguna() {
   return 100; // Contoh nilai
 }
 
+// Buat tabel settings jika belum ada
+db.run(`CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+)`);
+
 const resetAccountsCreated30Days = async () => {
-  try {
-    const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-    await new Promise((resolve, reject) => {
-      db.run(
-        'UPDATE users SET accounts_created_30days = 0 WHERE last_account_creation_date < DATE(?, "-30 days")',
-        [currentDate],
-        (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        }
-      );
+  const now = new Date();
+  const currentDay = now.getDate();
+  
+  // Cek tanggal reset terakhir
+  const lastReset = await new Promise((resolve) => {
+    db.get('SELECT value FROM system_settings WHERE key = ?', ['last_reset_date'], (err, row) => {
+      resolve(row ? new Date(row.value) : null);
     });
-    console.log('✅ Total akun dalam 30 hari telah di-reset untuk pengguna yang memenuhi syarat.');
-  } catch (error) {
-    console.error('🚫 Gagal mereset total akun dalam 30 hari:', error);
+  });
+
+  // Jika sudah reset bulan ini, skip
+  if (lastReset && lastReset.getMonth() === now.getMonth()) {
+    console.log('Reset sudah dilakukan bulan ini');
+    return;
+  }
+
+  // Proses reset tiap tanggal 1 jam 00:05
+  if (currentDay === 1 && now.getHours() === 0 && now.getMinutes() >= 5) {
+    try {
+      console.log('🔄 Memulai reset otomatis...');
+      
+      // Reset counter akun 30 hari
+      await new Promise((resolve, reject) => {
+        db.run('UPDATE users SET accounts_created_30days = 0', (err) => {
+          if (err) return reject(err);
+          resolve();
+        });
+      });
+
+      // Cek dan turunkan reseller tidak aktif
+      await checkAndDowngradeInactiveResellers();
+
+      // Simpan tanggal reset terakhir
+      await new Promise((resolve, reject) => {
+        db.run('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)', 
+          ['last_reset_date', now.toISOString()], 
+          (err) => {
+            if (err) return reject(err);
+            resolve();
+          });
+      });
+
+      console.log('✅ Reset otomatis berhasil');
+      
+      // Kirim notifikasi
+      await bot.telegram.sendMessage(
+        GROUP_ID,
+        `🔄 *RESET OTOMATIS* 30 hari\n` +
+        `📅 Tanggal: ${now.toLocaleDateString('id-ID')}\n` +
+        `⏰ Waktu: ${now.toLocaleTimeString('id-ID')}\n` +
+        `🔽 Reseller tidak aktif telah diturunkan ke member`
+      );
+    } catch (error) {
+      console.error('❌ Gagal reset otomatis:', error);
+    }
   }
 };
 
-// Jalankan reset setiap 24 jam (untuk memeriksa secara berkala)
-setInterval(resetAccountsCreated30Days, 24 * 60 * 60 * 1000);
+// Interval checker (jalan setiap jam)
+setInterval(() => {
+  resetAccountsCreated30Days().catch(console.error);
+}, 60 * 60 * 1000);
+   
 
+
+// 2. Fungsi Update yang Aman
 async function updateUserAccountCreation(userId) {
-  const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-
-  await new Promise((resolve, reject) => {
-    db.run(
-      'UPDATE users SET accounts_created_30days = accounts_created_30days + 1, total_accounts_created = total_accounts_created + 1, last_account_creation_date = ? WHERE user_id = ?',
-      [currentDate, userId],
-      (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      }
-    );
-  });
-}
-
-
-
-async function getAccountCreationRanking() {
   try {
-    const users = await new Promise((resolve, reject) => {
-      db.all(
-        'SELECT user_id, username, accounts_created_30days FROM users ORDER BY accounts_created_30days DESC LIMIT 3',
-        [],
-        (err, rows) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows);
-          }
+    const currentDate = new Date();
+    const today = currentDate.toISOString().split('T')[0];
+
+    await new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE users SET 
+         accounts_created_30days = accounts_created_30days + 1,
+         total_accounts_created = total_accounts_created + 1,
+         last_account_creation_date = ? 
+         WHERE user_id = ?`,
+        [today, userId],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
         }
       );
     });
-
-    if (users.length === 0) {
-      return null; // Tidak ada data ranking
-    }
-
-    return users;
   } catch (error) {
-    console.error('🚫 Kesalahan saat mengambil data ranking:', error);
-    return null;
+    console.error('🚫 Gagal update akun:', error);
   }
 }
+
+async function getAccountCreationRanking() {
+     try {
+       const users = await new Promise((resolve, reject) => {
+         db.all(
+           'SELECT user_id, username, accounts_created_30days FROM users WHERE accounts_created_30days > 0 ORDER BY accounts_created_30days DESC LIMIT 3',
+           [],
+           (err, rows) => {
+             if (err) reject(err);
+             else resolve(rows);
+           }
+         );
+       });
+
+       return users || []; // Kembalikan array kosong jika tidak ada data
+     } catch (error) {
+       console.error('🚫 Kesalahan saat mengambil data ranking:', error);
+       return []; // Kembalikan array kosong jika error
+     }
+   }
 
 // Fungsi untuk memeriksa dan mengupdate role pengguna berdasarkan transaksi
 async function checkAndUpdateUserRole(userId) {
@@ -563,8 +698,49 @@ async function getServerList(userId) {
   }));
 }
 
+bot.command('fixresetcycle', async (ctx) => {
+  if (!adminIds.includes(ctx.from.id)) {
+    return ctx.reply('⚠️ Hanya admin yang bisa melakukan perbaikan siklus reset');
+  }
 
+  try {
+    // Buat tanggal reset bulan ini (1 April 2025)
+    const fakeResetDate = new Date();
+    fakeResetDate.setDate(1); // Set ke tanggal 1
+    fakeResetDate.setHours(0, 5, 0, 0); // Set jam 00:05
 
+    await new Promise((resolve, reject) => {
+      db.run(`INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`, 
+        ['last_reset_date', fakeResetDate.toISOString()], 
+        function(err) {
+          if (err) {
+            console.error('❌ Gagal menyimpan reset date:', err);
+            return reject(err);
+          }
+          console.log('✅ Reset cycle diperbaiki. Last reset:', fakeResetDate);
+          resolve();
+        });
+    });
+
+    // Hitung tanggal reset berikutnya
+    const nextReset = new Date(fakeResetDate);
+    nextReset.setMonth(nextReset.getMonth() + 1);
+
+    await ctx.reply(
+      `✅ Siklus reset diperbaiki!\n\n` +
+      `♻️ Reset terakhir: ${fakeResetDate.toLocaleDateString('id-ID')}\n` +
+      `🔄 Reset berikutnya: ${nextReset.toLocaleDateString('id-ID')}`
+    );
+
+  } catch (error) {
+    console.error('❌ Error di fixresetcycle:', error);
+    await ctx.reply(
+      `❌ Gagal memperbaiki siklus:\n` +
+      `Error: ${error.message}\n\n` +
+      `Silakan coba lagi atau cek log server.`
+    );
+  }
+});
 bot.command('admin', async (ctx) => {
   console.log('Admin menu requested');
   
@@ -613,157 +789,211 @@ bot.action('refresh_menu', async (ctx) => {
 
 
    async function sendMainMenu(ctx) {
-  const userId = ctx.from.id;
-  const isAdmin = adminIds.includes(userId);
+  try {
+    const userId = ctx.from.id;
+    const isAdmin = adminIds.includes(userId);
 
-  const keyboard = [
-    [
-      { text: 'CREATE AKUN', callback_data: 'service_create' }
-      ],
-      [
-      { text: 'CREATE TRIAL', callback_data: 'service_trial' },
-      { text: 'RENEW AKUN', callback_data: 'service_renew' }
-    ],
-    [
-      { text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' },
-    ],
-    [
-      { text: 'REFRESH', callback_data: 'refresh_menu' }
-    ],
-  ];
-
-  // Add admin buttons if user is admin
-  if (isAdmin) {
-    keyboard.push([
-      { text: '⚙️ ADMIN', callback_data: 'admin_menu' },
-      { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }
+    // 1. Get all data in parallel for better performance
+    const [
+      serverCount,
+      userCount,
+      userData,
+      accountStats,
+      ranking,
+      resetData
+    ] = await Promise.all([
+      // Server count
+      new Promise(resolve => {
+        db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
+          resolve(err ? 0 : row.count);
+        });
+      }),
+      // User count
+      new Promise(resolve => {
+        db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
+          resolve(err ? 0 : row.count);
+        });
+      }),
+      // User data
+      new Promise(resolve => {
+        db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
+          resolve(err ? { saldo: 0, role: 'member' } : row || { saldo: 0, role: 'member' });
+        });
+      }),
+      // Account stats
+      new Promise(resolve => {
+        db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', 
+          (err, row) => {
+            resolve(err ? { total_30days: 0, total_global: 0 } : row || { total_30days: 0, total_global: 0 });
+          });
+      }),
+      // Ranking data
+      getAccountCreationRanking().catch(() => []),
+      // Reset data
+      new Promise(resolve => {
+        db.get('SELECT value FROM system_settings WHERE key = ?', ['last_reset_date'], (err, row) => {
+          resolve(err ? null : (row ? new Date(row.value) : null));
+        });
+      })
     ]);
-  }
 
-  const uptime = os.uptime();
-  const days = Math.floor(uptime / (60 * 60 * 24));
+    // 2. Prepare data
+    const username = ctx.from.username 
+      ? `<a href="tg://user?id=${userId}">${ctx.from.username}</a>` 
+      : `<a href="tg://user?id=${userId}">Pengguna</a>`;
+    
+    const formattedSaldo = userData.saldo.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    
+    // 3. Build reset info if available
+   // let resetInfo = '';
+ //   if (resetData) {
+ //     const nextReset = new Date(resetData);
+ //     nextReset.setMonth(nextReset.getMonth() + 1);
+  //    nextReset.setDate(1);
+      
+ //     resetInfo = `\n<b>//⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+//<b>Reset Terakhir:</b> ${resetData.toLocaleDateString('id-ID')}
+//<b>Reset Berikutnya:</b> ${nextReset.toLocaleDateString('id-ID')}`;
+//    }
 
-  // Get server count
-  let jumlahServer = 0;
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-    jumlahServer = row.count;
-  } catch (err) {
-    console.error('Kesalahan saat mengambil jumlah server:', err.message);
-  }
-
-  // Get user count
-  let jumlahPengguna = 0;
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-    jumlahPengguna = row.count;
-  } catch (err) {
-    console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
-  }
-
-  const username = ctx.from.username 
-  ? `<a href="tg://user?id=${userId}">${ctx.from.username}</a>` 
-  : `<a href="tg://user?id=${userId}">Pengguna</a>`;
-
-
-  // Get user balance and role
-  let saldo = 0;
-  let role = 'member'; // Default role is 'member'
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-    if (row) {
-      saldo = row.saldo;
-      role = row.role || 'member';
+    // 4. Prepare ranking text
+    let rankingText = '⚠️ Tidak ada data ranking.';
+    if (ranking && ranking.length > 0) {
+      rankingText = ranking.map((user, index) => {
+        if (index === 0) return `🥇 ${user.username}: ${user.accounts_created_30days} akun`;
+        if (index === 1) return `🥈 ${user.username}: ${user.accounts_created_30days} akun`;
+        if (index === 2) return `🥉 ${user.username}: ${user.accounts_created_30days} akun`;
+        return `➥ ${user.username}: ${user.accounts_created_30days} akun`;
+      }).join('\n');
     }
-  } catch (err) {
-    console.error('Kesalahan saat mengambil saldo atau role pengguna:', err.message);
-  }
 
- // Get ranking data
-const ranking = await getAccountCreationRanking();
-let rankingText = '';
-if (ranking && ranking.length > 0) {
-  rankingText = ranking.map((user, index) => {
-    if (index === 0) return `🥇 ${user.username}: ${user.accounts_created_30days} akun`;
-    if (index === 1) return `🥈 ${user.username}: ${user.accounts_created_30days} akun`;
-    if (index === 2) return `🥉 ${user.username}: ${user.accounts_created_30days} akun`;
-    return `➥ ${user.username}: ${user.accounts_created_30days} akun`;
-  }).join('\n');
-} else {
-  rankingText = '⚠️ Tidak ada data ranking.';
-}
+    // 5. Build keyboard
+    const keyboard = [
+      [{ text: 'CREATE AKUN', callback_data: 'service_create' }],
+      [
+        { text: 'CREATE TRIAL', callback_data: 'service_trial' },
+        { text: 'RENEW AKUN', callback_data: 'service_renew' }
+      ],
+      [{ text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' }],
+      [{ text: 'REFRESH', callback_data: 'refresh_menu' }]
+    ];
 
+    if (isAdmin) {
+      keyboard.push([
+        { text: '⚙️ ADMIN', callback_data: 'admin_menu' },
+        { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }
+      ]);
+    }
 
-  // Get total accounts in last 30 days and global
-  let totalAkun30Hari = 0;
-  let totalAkunGlobal = 0;
-  try {
-    const row = await new Promise((resolve, reject) => {
-      db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', [], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-    totalAkun30Hari = row.total_30days || 0;
-    totalAkunGlobal = row.total_global || 0;
-  } catch (error) {
-    console.error('🚫 Kesalahan saat mengambil total akun:', error);
-  }
-
-  // Format balance with commas
-  const formattedSaldo = saldo.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-
-const messageText = `
+    // 6. Build final message
+    const messageText = `
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-                ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​</b> ≡
+                ≡ 🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​ ≡
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-🌐 <b><code>Server Tersedia:</code></b> ${jumlahServer}
-👥 <b><code>Total Pengguna:</code></b> ${jumlahPengguna}
-📊 <b><code>Akun (30 Hari):</code></b> ${totalAkun30Hari}
-🌍 <b><code>Akun Global:</code></b> ${totalAkunGlobal}
+🌐 <b>Server Tersedia:</b> ${serverCount}
+👥 <b>Total Pengguna:</b> ${userCount}
+📊 <b>Akun (30 Hari):</b> ${accountStats.total_30days}
+🌍 <b>Akun Global:</b> ${accountStats.total_global}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<blockquote><b><code>❇️TRIAL 5X DALAM SEHARI</code></b></blockquote>
+<blockquote><b>❇️ TRIAL 5X DALAM SEHARI</b></blockquote>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-👋 <b><code>Selamat Datang</code></b> <i>${username}</i>
-🆔 <b><code>ID Anda:</code></b><code>${userId}</code>
-⭕ <b><code>Status:</code></b><b><code>${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}</code></b><blockquote><b><code>SALDO ANDA:</code></b> Rp <code>${formattedSaldo}</code></blockquote>
+👋 <b>Selamat Datang</b> <i>${username}</i>
+🆔 <b>ID Anda:</b> <code>${userId}</code>
+⭕ <b>Status:</b> <b>${userData.role === 'reseller' ? 'Reseller 🛍️' : 'Member 👤'}</b>
+<blockquote><b>SALDO ANDA:</b> Rp <code>${formattedSaldo}</code></blockquote>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<blockquote>🏆 <b><code>TOP 3 CREATE AKUN (30 HARI)</code></b></blockquote>
-<code>${rankingText}</code>
+<blockquote>🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b></blockquote><code>${rankingText}</code>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b><code>CHAT OWNER:</code></b> <a href="tg://user?id=7251232303">RyyStore</a>
+<b>CHAT OWNER:</b> <a href="tg://user?id=7251232303">RyyStore</a>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-Silakan pilih opsi layanan:
-`;
+Silakan pilih opsi layanan:`;
 
-try {
-  await ctx.reply(messageText, {
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: keyboard
-    }
-  });
-    console.log('Main menu sent');
+    // 7. Send message
+    await ctx.reply(messageText, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: keyboard },
+      disable_web_page_preview: true
+    });
+
+    console.log(`Menu utama berhasil dikirim ke ${userId}`);
+
   } catch (error) {
-    console.error('Error saat mengirim menu utama:', error);
+    console.error('Error di sendMainMenu:', error);
+    
+    // Fallback simple menu
+    await ctx.reply(
+      'Silakan pilih menu:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'CREATE', callback_data: 'service_create' }],
+            [{ text: 'REFRESH', callback_data: 'refresh_menu' }]
+          ]
+        }
+      }
+    );
   }
 }
+
+bot.command('forceresetnow', async (ctx) => {
+  if (!adminIds.includes(ctx.from.id)) {
+    return ctx.reply('⚠️ Hanya admin yang bisa melakukan reset manual');
+  }
+
+  try {
+    // 1. Reset counter
+    await new Promise((resolve, reject) => {
+      db.run('UPDATE users SET accounts_created_30days = 0', (err) => {
+        if (err) return reject(err);
+        console.log('Counter direset');
+        resolve();
+      });
+    });
+
+    // 2. Simpan tanggal reset
+    const resetDate = new Date();
+    await new Promise((resolve, reject) => {
+      db.run(`INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`, 
+        ['last_reset_date', resetDate.toISOString()], 
+        (err) => {
+          if (err) return reject(err);
+          resolve();
+        });
+    });
+
+    // 3. Kirim laporan
+    const successMsg = 
+      `✅ Reset manual berhasil!\n\n` +
+      `📅 Tanggal: ${resetDate.toLocaleDateString('id-ID')}\n` +
+      `⏰ Waktu: ${resetDate.toLocaleTimeString('id-ID')}\n` +
+      `🔄 Reset berikutnya: 1 Mei 2025`;
+
+    await ctx.reply(successMsg);
+    await bot.telegram.sendMessage(GROUP_ID, `♻️ ADMIN MELAKUKAN RESET MANUAL\n${successMsg}`);
+
+  } catch (error) {
+    const errorMsg = `❌ Gagal reset manual:\n${error.message}`;
+    console.error(errorMsg);
+    await ctx.reply(errorMsg);
+    await bot.telegram.sendMessage(ADMIN, `⚠️ ERROR RESET MANUAL\n${error.stack}`);
+  }
+});
+
+bot.command('checkreset', async (ctx) => {
+  const row = await new Promise(resolve => {
+    db.get('SELECT * FROM system_settings WHERE key = ?', ['last_reset_date'], (err, row) => {
+      resolve(row);
+    });
+  });
+
+  if (row) {
+    await ctx.reply(`♻️ Terakhir reset:\n${row.value}\n(${new Date(row.value).toLocaleString()})`);
+  } else {
+    await ctx.reply('ℹ️ Belum ada data reset tersimpan');
+  }
+});
+
 bot.command('helpadmin', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
