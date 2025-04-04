@@ -112,9 +112,9 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
             }
             const msg = `
 ──────────────────────
-✿ *CREATE SSH SUCCESS*✿
+*CREATE SSH SUCCESS*
 ──────────────────────
-🔹 *Informasi Akun*
+*Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${sshData.username}\`
 │ *Password* : \`${sshData.password}\`
@@ -133,7 +133,7 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
 │ *OVPN UDP* : \`2200\`
 │ *BadVPN UDP*: \`7100, 7300, 7300\`
 └─────────────────────
-🔗 *Link dan Payload*
+*Link dan Payload*
 ───────────────────────
 Payload      : 
 \`
@@ -158,8 +158,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 │ Expires: \`${sshData.expired}\`
 │ IP Limit: \`${sshData.ip_limit}\`
 └─────────────────────
-
-✿Terimakasih Telah Menggunakan layanan kami!✿
+Terimakasih Telah Menggunakan layanan kami!
 `;
               console.log('SSH account created successfully');
               return resolve(msg);
@@ -224,9 +223,9 @@ async function createvmess(username, exp, quota, iplimit, serverId, usernameTele
             }
             const msg = `
 ──────────────────────
-✿ *CREATE VMESS SUCCESS*✿
+*CREATE VMESS SUCCESS*
 ──────────────────────
-🔹 *Informasi Akun*
+*Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vmessData.username}\`
 │ *Domain*   : \`${vmessData.domain}\`
@@ -238,22 +237,22 @@ async function createvmess(username, exp, quota, iplimit, serverId, usernameTele
 │ *Path*     : \`/vmess\`
 │ *Path GRPC*: \`vmess-grpc\`
 └─────────────────────
-✿ *URL VMESS TLS*
+*URL VMESS TLS*
 \`
 ${vmessData.vmess_tls_link}
 \`
 ──────────────────────
-✿ *URL VMESS HTTP*
+*URL VMESS HTTP*
 \`
 ${vmessData.vmess_nontls_link}
 \`
 ──────────────────────
-✿ *URL VMESS GRPC*
+*URL VMESS GRPC*
 \`
 ${vmessData.vmess_grpc_link}
 \`
 ──────────────────────
-✿ *UUID*
+*UUID*
 \`
 ${vmessData.uuid}
 \`
@@ -262,8 +261,7 @@ ${vmessData.uuid}
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
 │ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} \`
 └─────────────────────
-Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
-✿Terimakasih Telah Menggunakan Layanan Kami!✿
+Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VMess account created successfully');
               return resolve(msg);
@@ -336,9 +334,9 @@ async function createvless(username, exp, quota, iplimit, serverId, usernameTele
             }
             const msg = `
 ──────────────────────
-✿ *CREATE VLESS SUCCESS*✿
+*CREATE VLESS SUCCESS*
 ──────────────────────
-🔹 *Informasi Akun*
+*Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vlessData.username}\`
 │ *Domain*   : \`${vlessData.domain}\`
@@ -350,22 +348,22 @@ async function createvless(username, exp, quota, iplimit, serverId, usernameTele
 │ *Path*     : \`/vless\`
 │ *Path GRPC*: \`vless-grpc\`
 └─────────────────────
-✿ *URL VLESS TLS*
+*URL VLESS TLS*
 \`
 ${vlessData.vless_tls_link}
 \`
 ──────────────────────
-✿ *URL VLESS HTTP*
+*URL VLESS HTTP*
 \`
 ${vlessData.vless_nontls_link}
 \`
 ──────────────────────
-✿ *URL VLESS GRPC*
+*URL VLESS GRPC*
 \`
 ${vlessData.vless_grpc_link}
 \`
 ──────────────────────
-✿ *UUID*
+*UUID*
 \`
 ${vlessData.uuid}
 \`
@@ -374,8 +372,7 @@ ${vlessData.uuid}
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
 │ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
 └─────────────────────
-Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
-✿Terimakasih Telah Menggunakan Layanan Kami!✿
+Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VLESS account created successfully');
               return resolve(msg);
@@ -450,9 +447,9 @@ async function createtrojan(username, exp, quota, iplimit, serverId, usernameTel
             }
             const msg = `
 ──────────────────────
-✿ *CREATE TROJAN SUCCESS*✿
+*CREATE TROJAN SUCCESS*
 ──────────────────────
-🔹 *Informasi Akun*
+*Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${trojanData.username}\`
 │ *Domain*   : \`${trojanData.domain}\`
@@ -463,22 +460,22 @@ async function createtrojan(username, exp, quota, iplimit, serverId, usernameTel
 │ *Path*     : \`/trojan-ws\`
 │ *Path GRPC*: \`trojan-grpc\`
 └─────────────────────
-✿ *URL TROJAN TLS*
+*URL TROJAN TLS*
 \`
 ${trojanData.trojan_tls_link}
 \`
 ──────────────────────
-✿ *URL TROJAN HTTP*
+*URL TROJAN HTTP*
 \`
 ${trojanData.trojan_nontls_link1}
 \`
 ──────────────────────
-✿ *URL TROJAN GRPC*
+*URL TROJAN GRPC*
 \`
 ${trojanData.trojan_grpc_link}
 \`
 ──────────────────────
-✿ *PASSWORD*
+*PASSWORD*
 \`
 ${trojanData.uuid}
 \`
@@ -487,8 +484,7 @@ ${trojanData.uuid}
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
 │ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} \`
 └─────────────────────
-Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
-✿Terimakasih  Telah menggunakan layanan kami!✿
+Terimakasih  Telah menggunakan layanan kami!✿
 `;
               console.log('Trojan account created successfully');
               return resolve(msg);
