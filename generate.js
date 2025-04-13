@@ -347,25 +347,37 @@ function initGenerateBug(bot) {
 
         // Kirim pilihan bug untuk YAML
         const reply = await ctx.reply('Silakan pilih jenis bug untuk YAML:', {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'XL VIDIO', callback_data: 'yaml_bug_vidio [ quiz ]' }],
-                    [{ text: 'XL VIU', callback_data: 'yaml_bug_viu' }],
-                    [{ text: 'XL VIP', callback_data: 'yaml_bug_XL VIP [ 81 ]' }],
-                    [{ text: 'XL XCV WC', callback_data: 'yaml_bug_XL XCV WC [ Zoom ]' }],
-                    [{ text: 'XL XCL/S [AVA]', callback_data: 'yaml_bug_XL XCL/S [ AVA ]' }],
-                    [{ text: 'XL XCL/S WC [AVA]', callback_data: 'yaml_bug_XL XCL/S WC [ AVA ]' }],
-                    [{ text: 'ILPED WC [bakrie]', callback_data: 'yaml_bug_ILPED WC [ Bakrie ]' }],
-                    [{ text: 'ILPED WC [chat]', callback_data: 'yaml_bug_ILPEDD WC2 [ chat ]' }],
-                    [{ text: 'ILPED WC [unnes]', callback_data: 'yaml_bug_ILPEDDD WC3 [ Unnes ]' }],
-                    [{ text: 'BYU OPOK', callback_data: 'yaml_bug_byu OPOK' }]
-                ]
-            }
-        });
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: 'XL VIDIO', callback_data: 'yaml_bug_vidio [ quiz ]' },
+                { text: 'XL VIU', callback_data: 'yaml_bug_viu' }
+            ],
+            [
+                { text: 'XL VIP', callback_data: 'yaml_bug_XL VIP [ 81 ]' },
+                { text: 'XL XCV WC', callback_data: 'yaml_bug_XL XCV WC [ Zoom ]' }
+            ],
+            [
+                { text: 'XL XCL/S [AVA]', callback_data: 'yaml_bug_XL XCL/S [ AVA ]' },
+                { text: 'XL XCL/S WC [AVA]', callback_data: 'yaml_bug_XL XCL/S WC [ AVA ]' }
+            ],
+            [
+                { text: 'ILPED WC [bakrie]', callback_data: 'yaml_bug_ILPED WC [ Bakrie ]' },
+                { text: 'ILPED WC [chat]', callback_data: 'yaml_bug_ILPEDD WC2 [ chat ]' }
+            ],
+            [
+                { text: 'ILPED WC [unnes]', callback_data: 'yaml_bug_ILPEDDD WC3 [ Unnes ]' },
+                { text: 'BYU OPOK', callback_data: 'yaml_bug_byu OPOK' }
+            ]
+        ]
+    }
+});
 
-        // Simpan message_id pesan terakhir
-        userState[chatId].lastMessageId = reply.message_id;
-    });
+// Simpan message_id pesan terakhir
+userState[chatId].lastMessageId = reply.message_id;
+});
+
+
 
     // Handle callback query untuk memilih bug YAML
     bot.action(/yaml_bug_(.+)/, async (ctx) => {
@@ -475,25 +487,35 @@ function initGenerateBug(bot) {
 
         // Kirim pilihan bug
         const reply = await ctx.reply('Silakan pilih jenis bug:', {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'XL VIDIO', callback_data: 'bug_vidio [ quiz ]' }],
-                    [{ text: 'XL VIU', callback_data: 'bug_viu' }],
-                    [{ text: 'XL XCV', callback_data: 'bug_XL XCV [ 81 ]' }],
-                    [{ text: 'XL XCV WC', callback_data: 'bug_XL XCV WC [ Zoom ]' }],
-                    [{ text: 'XL XCL/S [AVA]', callback_data: 'bug_XL XCL/S [ AVA ]' }],
-                    [{ text: 'XL XCL/S WC [AVA]', callback_data: 'bug_XL XCL/S WC [ AVA ]' }],
-                    [{ text: 'ILPED WC [bakrie]', callback_data: 'bug_ILPED WC [ Bakrie ]' }],
-                    [{ text: 'ILPED WC [chat]', callback_data: 'bug_ILPEDD WC2 [ chat ]' }],
-                    [{ text: 'ILPED WC [unes]', callback_data: 'bug_ILPEDDD WC3 [ unnes ]' }],
-                    [{ text: 'BYU OPOK', callback_data: 'bug_byu OPOK' }]
-                ]
-            }
-        });
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: 'XL VIDIO', callback_data: 'bug_vidio [ quiz ]' },
+                { text: 'XL VIU', callback_data: 'bug_viu' }
+            ],
+            [
+                { text: 'XL XCV', callback_data: 'bug_XL XCV [ 81 ]' },
+                { text: 'XL XCV WC', callback_data: 'bug_XL XCV WC [ Zoom ]' }
+            ],
+            [
+                { text: 'XL XCL/S [AVA]', callback_data: 'bug_XL XCL/S [ AVA ]' },
+                { text: 'XL XCL/S WC [AVA]', callback_data: 'bug_XL XCL/S WC [ AVA ]' }
+            ],
+            [
+                { text: 'ILPED WC [bakrie]', callback_data: 'bug_ILPED WC [ Bakrie ]' },
+                { text: 'ILPED WC [chat]', callback_data: 'bug_ILPEDD WC2 [ chat ]' }
+            ],
+            [
+                { text: 'ILPED WC [unes]', callback_data: 'bug_ILPEDDD WC3 [ unnes ]' },
+                { text: 'BYU OPOK', callback_data: 'bug_byu OPOK' }
+            ]
+        ]
+    }
+});
 
-        // Simpan message_id pesan terakhir
-        userState[chatId].lastMessageId = reply.message_id;
-    });
+// Simpan message_id pesan terakhir
+userState[chatId].lastMessageId = reply.message_id;
+});
 
     // Handle callback query untuk memilih bug
     bot.action(/bug_(.+)/, async (ctx) => {

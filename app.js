@@ -4021,7 +4021,7 @@ bot.on('callback_query', async (ctx) => {
 ✧ <b>JUMLAH YANG HARUS DIBAYAR</b>:<code><b> 
    <u>Rp ${uniqueAmount.toLocaleString('id-ID')}</u></b></code>
 ⏳ <b>Status</b>: <code>Pending</code>
-⌛ <b>Batas Waktu</b>: <code>p${new Date(Date.now() + 3 * 60000).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</code>
+⌛ <b>Batas Waktu</b>: <code>${new Date(Date.now() + 3 * 60000).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</code>
 📅 <b>Tanggal</b>: ${new Date().toLocaleString('id-ID')}
 
 <blockquote>⚠️ <b>PERHATIAN</b> ⚠️
