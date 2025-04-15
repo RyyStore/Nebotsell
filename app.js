@@ -8,10 +8,7 @@ const { initGenerateBug } = require('./generate');
 
 
 const app = express();
-const axios = require('axios').create({
-  timeout: 10000, // 10 detik timeout
-  retry: 3 // tambahkan retry jika perlu
-});
+const axios = require('axios');
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
