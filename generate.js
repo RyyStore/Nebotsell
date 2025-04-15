@@ -406,7 +406,7 @@ userState[chatId].lastMessageId = reply.message_id;
                 break;
             case 'XL XCV WC [ Zoom ]':
                 bugAddress = 'support.zoom.us';
-                bugSubdomain = 'support.zoom.us';
+                bugSubdomain = 'zoomgov';
                 break;
             case 'XL XCL/S [ AVA ]':
                 bugAddress = 'ava.game.naver.com';
