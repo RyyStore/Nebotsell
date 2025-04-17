@@ -1126,46 +1126,47 @@ bot.command('helpadmin', async (ctx) => {
   const helpMessage = `
 <b>📚 DAFTAR PERINTAH ADMIN</b>
 
-<code><blockquote>┌─
+<blockquote>┌─
 ────────────────────────────┐
 │ <b>MANAJEMEN SERVER</b>                  
 ├─────────────────────────────
-│ /addserver - Tambah server baru      
-│ /listserver - Lihat daftar server    
-│ /detailserver - Detail server        
-│ /hapusserver - Hapus server          
-│ /editharga - Edit harga server       
-│ /editnama - Edit nama server         
-│ /editdomain - Edit domain server     
-│ /editauth - Edit auth server         
-│ /editquota - Edit quota server       
-│ /editiplimit - Edit limit IP         
+│ <code>/addserver</code> - Tambah server baru      
+│ <code>/listserver</code> - Lihat daftar server    
+│ <code>/detailserver</code> - Detail server        
+│ <code>/hapusserver</code> - Hapus server          
+│ <code>/editharga</code> - Edit harga server       
+│ <code>/editnama</code> - Edit nama server         
+│ <code>/editdomain</code> - Edit domain server     
+│ <code>/editauth</code> - Edit auth server         
+│ <code>/editquota</code> - Edit quota server       
+│ <code>/editiplimit</code> - Edit limit IP         
+│ <code>/editlimitcreate</code> - Limit jumlah layanan         
 ├─────────────────────────────
 │ <b>MANAJEMEN RESELLER</b>                
 ├─────────────────────────────
-│ /listreseller - Lihat daftar reseller
-│ /addsaldo - Tambah saldo user        
-│ /hapussaldo - Kurangi saldo user     
-│ /changerole - Ubah role user         
-│ /upgrade_reseller - Upgrade ke resell
+│ <code>/listreseller</code> - Lihat daftar reseller
+│ <code>/addsaldo</code> - Tambah saldo user        
+│ <code>/hapussaldo</code> - Kurangi saldo user     
+│ <code>/changerole</code> - Ubah role user         
+│ <code>/upgrade_reseller</code> - Upgrade ke resell
 ├─────────────────────────────
 │ <b>BROADCAST & KONTAK</b>               
 ├─────────────────────────────
-│ /broadcast - Kirim pesan ke semua    
-│ /send - Kirim pesan ke user tertentu 
+│ <code>/broadcast</code> - Kirim pesan ke semua    
+│ <code>/send</code> - Kirim pesan ke user tertentu 
 ├─────────────────────────────
 │ <b>PENGATURAN SISTEM</b>                
 ├─────────────────────────────
-│ /forceresetnow - Reset counter 30hr  
-│ /fixresetcycle - Perbaiki siklus reset
-│ /checkreset - Cek terakhir reset     
-│ /resetdb - Reset database server     
+│ <code>/forceresetnow</code> - Reset counter 30hr  
+│ <code>/fixresetcycle</code> - Perbaiki siklus reset
+│ <code>/checkreset</code> - Cek terakhir reset     
+│ <code>/resetdb</code> - Reset database server     
 ├─────────────────────────────
 │ <b>LAIN-LAIN</b>                        
 ├─────────────────────────────
-│ /helpadmin - Tampilkan menu ini      
-│ /menu - Kembali ke menu utama       
-└─────────────────────────────</blockquote></code>
+│ <code>/helpadmin</code> - Tampilkan menu ini      
+│ <code>/menu</code> - Kembali ke menu utama       
+└─────────────────────────────</blockquote>
 
 <b>🔧 FITUR BARU</b>
 - Contact Top Reseller
@@ -1174,8 +1175,8 @@ bot.command('helpadmin', async (ctx) => {
 - Statistik Lengkap Reseller
 
 <b>📌 CONTOH PENGGUNAAN:</b>
-<code>/addsaldo 12345678 50000</code> - Tambah saldo Rp50.000 ke user ID 12345678
-<code>/changerole 12345678 reseller</code> - Ubah role user ke reseller
+<code>/addsaldo 12345678 50000</code> - Tambah saldo Rp50.000 ke user ID 12345678  
+<code>/changerole 12345678 reseller</code> - Ubah role user ke reseller  
 <code>/broadcast Pesan penting</code> - Kirim broadcast ke semua user
 
 Gunakan perintah di atas dengan format yang benar.
@@ -1192,6 +1193,7 @@ Gunakan perintah di atas dengan format yang benar.
     }
   });
 });
+
 
 // Tambahkan handler untuk tombol
 bot.action('admin_examples', async (ctx) => {
