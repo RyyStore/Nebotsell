@@ -26,20 +26,55 @@ const ADMIN = vars.USER_ID; // Sudah di-set di VPS
 const NAMA_STORE = vars.NAMA_STORE || '@RyyStore'; // Sudah di-set di VPS
 const GROUP_ID = "-1002397066993"; // Tambahkan grup ID di sini
 const bot = new Telegraf(BOT_TOKEN, {
-    handlerTimeout: 180_000 
-});
+       handlerTimeout: 180_000, // 3 menit
+       telegram: {
+         agent: null, // Gunakan agent default
+         timeout: 30000 // 30 detik timeout
+       }
+     });
 
 
 const adminIds = ADMIN;
 console.log('Bot initialized');
 
-const db = new sqlite3.Database('./sellvpn.db', (err) => {
-  if (err) {
-    console.error('Kesalahan koneksi SQLite3:', err.message);
-  } else {
-    console.log('Terhubung ke SQLite3');
-  }
-});
+const db = new sqlite3.Database('./sellvpn.db', sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+       if (err) {
+         console.error('Database connection error:', err);
+         // Coba reconnect setelah 5 detik
+         setTimeout(() => connectDatabase(), 5000);
+       } else {
+         console.log('Connected to SQLite database');
+         // Aktifkan WAL mode untuk performa lebih baik
+         db.run('PRAGMA journal_mode=WAL;');
+       }
+     });
+
+     function connectDatabase() {
+       // Implementasi reconnect
+     }
+     
+     const axiosWithRetry = axios.create({
+       timeout: 10000,
+       retry: 3,
+       retryDelay: (retryCount) => {
+         return retryCount * 1000;
+       }
+     });
+
+     axiosWithRetry.interceptors.response.use(undefined, (err) => {
+       const config = err.config;
+       if (!config || !config.retry) return Promise.reject(err);
+       
+       config.__retryCount = config.__retryCount || 0;
+       if (config.__retryCount >= config.retry) {
+         return Promise.reject(err);
+       }
+       
+       config.__retryCount += 1;
+       return new Promise((resolve) => {
+         setTimeout(() => resolve(axiosWithRetry(config)), config.retryDelay || 1000);
+       });
+     });
 
 // Fungsi untuk membulatkan harga khusus 30 hari
 function calculatePrice(hargaPerHari, expDays) {
@@ -2787,22 +2822,10 @@ async function processTrial(ctx, type, serverId) {
   try {
     let user = await getUserData(userId);
     
-    // Check if user has sufficient balance (minimum 1000)
-    if (!isAdmin && (!user || user.saldo < 100)) {
-      return ctx.reply('🚫 *Anda harus memiliki saldo minimal 100 perak (tidak memotong saldo) untuk menggunakan trial.*\n\nSilakan topup terlebih dahulu sebelum mencoba trial.', { 
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' }]
-          ]
-        }
-      });
-    }
-    
-
+    // Check trial count regardless of balance
     let trialCount = 0;
-    let dailyLimit = 5; // Default limit for members
-
+    const maxFreeTrials = 2; // Batas trial gratis
+    
     if (!user) {
       console.log('User belum ada di database, menambahkan user baru.');
       await new Promise((resolve, reject) => {
@@ -2820,17 +2843,29 @@ async function processTrial(ctx, type, serverId) {
         );
       });
     } else {
-      // Set higher limit for resellers
-      if (user.role === 'reseller') {
-        dailyLimit = 20;
-      }
-      
+      // Check trial count
       if (user.last_trial_date === today) {
         trialCount = user.trial_count;
       }
+      
+      // Jika trial count melebihi batas gratis, cek saldo
+      if (trialCount >= maxFreeTrials) {
+        if (!isAdmin && (!user || user.saldo < 100)) {
+          return ctx.reply('🚫 *Anda telah menggunakan semua trial gratis (2x).*\n\nSilakan topup untuk membuat akun reguler.', { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' }],
+                [{ text: 'BUAT AKUN REGULER', callback_data: 'service_create' }]
+              ]
+            }
+          });
+        }
+      }
     }
 
-    // Admin bisa bypass limit
+    // Jika melebihi batas harian untuk role (5 untuk member, 20 untuk reseller)
+    const dailyLimit = user?.role === 'reseller' ? 20 : 5;
     if (!isAdmin && trialCount >= dailyLimit) {
       console.log(`User ${userId} sudah mencapai batas trial hari ini.`);
       return ctx.reply(`🚫 *Anda sudah mencapai batas maksimal trial hari ini (${dailyLimit} kali).*`, { 
@@ -2885,7 +2920,7 @@ async function processTrial(ctx, type, serverId) {
 ➥ <b>Username</b> : <a href="tg://user?id=${userId}">${username}</a>
 ➥ <b>User ID</b>  : ${userId}
 ➥ <b>Role</b>     : ${isAdmin ? 'Admin 👑' : (user?.role === 'reseller' ? 'Reseller 🛒' : 'Member 👤')}
-➥ <b>Trial Ke</b> : ${trialCount + 1}/${dailyLimit}
+➥ <b>Trial Ke</b> : ${trialCount + 1}/${maxFreeTrials} (Gratis)
 <b>──────────────────────</b>
 ➥ <b>Layanan</b>  : ${type.toUpperCase()}
 <blockquote>➥ <b>Server</b>   : ${server.nama_server}</blockquote>
