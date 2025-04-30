@@ -138,8 +138,6 @@ function getUUID(link) {
 function convertToYAML(link, bugAddress, bugSubdomain, fallbackUsername = 'Unnamed') {
     try {
         let yamlConfig = 'Format tidak didukung untuk konversi YAML.';
-
-        // Ambil username dari bagian setelah # di link (untuk Trojan dan VLESS)
         const usernameFromLink = link.split('#')[1] || fallbackUsername;
 
         if (link.startsWith('vmess://')) {
@@ -147,62 +145,72 @@ function convertToYAML(link, bugAddress, bugSubdomain, fallbackUsername = 'Unnam
             const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
             const config = JSON.parse(decodedData);
 
-            // Ganti server dengan bugAddress
+            // Simpan host asli
+            const originalHost = config.host || config.add;
+            
+            // Update hanya server/address dengan bugAddress
             config.add = bugAddress;
 
-            // Jika ada bugSubdomain, ganti host
+            // Jika ada bugSubdomain, gunakan untuk SNI tapi pertahankan host asli
             if (bugSubdomain) {
-                const originalHost = config.host || config.add;
                 const domainParts = originalHost.split('.');
                 const mainDomain = domainParts.slice(-2).join('.');
-                config.host = `${bugSubdomain}.${mainDomain}`;
-                config.sni = config.host;
+                config.sni = `${bugSubdomain}.${mainDomain}`;
             }
 
-            // Ambil name dari config.ps atau fallbackUsername
             const name = config.ps || fallbackUsername;
 
             yamlConfig = `proxies:
-  - name: ${name}
-    server: ${config.add}
-    port: ${config.port}
-    type: vmess
-    uuid: ${config.id}
-    alterId: ${config.aid}
-    cipher: auto
-    tls: ${config.tls ? 'true' : 'false'}
-    network: ${config.net}
-    ws-opts:
-      path: ${config.path || '/'}
-      headers:
-        Host: ${config.host || config.add}
-    udp: true`;
+- name: ${name}
+  server: ${config.add}
+  port: ${config.port}
+  type: vmess
+  uuid: ${config.id}
+  alterId: ${config.aid || 0}
+  cipher: auto
+  tls: ${config.tls ? 'true' : 'false'}
+  skip-cert-verify: true
+  servername: ${config.sni || originalHost}
+  network: ${config.net || 'ws'}
+  ws-opts:
+    path: ${config.path || '/'}
+    headers:
+      Host: ${originalHost}  
+  udp: true`;
+
         } else if (link.startsWith('trojan://')) {
             // Parsing link Trojan
             const url = new URL(link);
             const password = url.username;
             const server = bugAddress;
             const port = url.port || 443;
-            const sni = url.searchParams.get('sni') || server;
+            const originalSNI = url.searchParams.get('sni') || url.hostname;
             const path = url.searchParams.get('path') || '/';
+            const originalHost = originalSNI; // Host asli
 
-            // Jika ada bugSubdomain, sesuaikan SNI dan host
-            const finalSNI = bugSubdomain ? `${bugSubdomain}.${sni.split('.').slice(-2).join('.')}` : sni;
+            // Jika ada bugSubdomain, sesuaikan SNI tapi pertahankan host asli
+            let finalSNI = originalSNI;
+            if (bugSubdomain) {
+                const domainParts = originalSNI.split('.');
+                const mainDomain = domainParts.slice(-2).join('.');
+                finalSNI = `${bugSubdomain}.${mainDomain}`;
+            }
 
             yamlConfig = `proxies:
-  - name: ${usernameFromLink}
-    server: ${server}
-    port: ${port}
-    type: trojan
-    password: ${password}
-    skip-cert-verify: true
-    sni: ${finalSNI}
-    network: ws
-    ws-opts:
-      path: ${path}
-      headers:
-        Host: ${finalSNI}
-    udp: true`;
+- name: ${usernameFromLink}
+  server: ${server}
+  port: ${port}
+  type: trojan
+  password: ${password}
+  skip-cert-verify: true
+  sni: ${finalSNI}
+  network: ws
+  ws-opts:
+    path: ${path}
+    headers:
+      Host: ${originalHost}  
+  udp: true`;
+
         } else if (link.startsWith('vless://')) {
             // Parsing link VLESS
             const url = new URL(link);
@@ -214,35 +222,28 @@ function convertToYAML(link, bugAddress, bugSubdomain, fallbackUsername = 'Unnam
             const path = url.searchParams.get('path') || '/';
             const originalHost = url.searchParams.get('host') || originalSNI;
 
-            // Handle subdomain
-            let finalSNI, finalHost;
+            // Handle subdomain - hanya untuk SNI, host tetap asli
+            let finalSNI = originalSNI;
             if (bugSubdomain) {
                 const sniParts = originalSNI.split('.');
                 const sniMainDomain = sniParts.slice(-2).join('.');
                 finalSNI = `${bugSubdomain}.${sniMainDomain}`;
-                
-                const hostParts = originalHost.split('.');
-                const hostMainDomain = hostParts.slice(-2).join('.');
-                finalHost = `${bugSubdomain}.${hostMainDomain}`;
-            } else {
-                finalSNI = originalSNI;
-                finalHost = originalHost;
             }
 
             yamlConfig = `proxies:
-  - name: ${usernameFromLink}
-    server: ${server}
-    port: ${port}
-    type: vless
-    uuid: ${uuid}
-    tls: true
-    servername: ${finalSNI}
-    network: ${type}
-    ws-opts:
-      path: ${path}
-      headers:
-        Host: ${finalHost}
-    udp: true`;
+- name: ${usernameFromLink}
+  server: ${server}
+  port: ${port}
+  type: vless
+  uuid: ${uuid}
+  tls: true
+  servername: ${finalSNI}
+  network: ${type}
+  ws-opts:
+    path: ${path}
+    headers:
+      Host: ${originalHost} 
+  udp: true`;
         }
 
         return yamlConfig;
@@ -347,37 +348,35 @@ function initGenerateBug(bot) {
 
         // Kirim pilihan bug untuk YAML
         const reply = await ctx.reply('Silakan pilih jenis bug untuk YAML:', {
-    reply_markup: {
-        inline_keyboard: [
-            [
-                { text: 'XL VIDIO', callback_data: 'yaml_bug_vidio [ quiz ]' },
-                { text: 'XL VIU', callback_data: 'yaml_bug_viu' }
-            ],
-            [
-                { text: 'XL VIP', callback_data: 'yaml_bug_XL VIP [ 81 ]' },
-                { text: 'XL XCV WC', callback_data: 'yaml_bug_XL XCV WC [ Zoom ]' }
-            ],
-            [
-                { text: 'XL XCL/S [AVA]', callback_data: 'yaml_bug_XL XCL/S [ AVA ]' },
-                { text: 'XL XCL/S WC [AVA]', callback_data: 'yaml_bug_XL XCL/S WC [ AVA ]' }
-            ],
-            [
-                { text: 'ILPED WC [bakrie]', callback_data: 'yaml_bug_ILPED WC [ Bakrie ]' },
-                { text: 'ILPED WC [chat]', callback_data: 'yaml_bug_ILPEDD WC2 [ chat ]' }
-            ],
-            [
-                { text: 'ILPED WC [unnes]', callback_data: 'yaml_bug_ILPEDDD WC3 [ Unnes ]' },
-                { text: 'BYU OPOK', callback_data: 'yaml_bug_byu OPOK' }
-            ]
-        ]
-    }
-});
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: 'XL VIDIO', callback_data: 'yaml_bug_vidio [ quiz ]' },
+                        { text: 'XL VIU', callback_data: 'yaml_bug_viu' }
+                    ],
+                    [
+                        { text: 'XL VIP', callback_data: 'yaml_bug_XL VIP [ 81 ]' },
+                        { text: 'XL XCV WC', callback_data: 'yaml_bug_XL XCV WC [ Zoom ]' }
+                    ],
+                    [
+                        { text: 'XL XCL/S [AVA]', callback_data: 'yaml_bug_XL XCL/S [ AVA ]' },
+                        { text: 'XL XCL/S WC [AVA]', callback_data: 'yaml_bug_XL XCL/S WC [ AVA ]' }
+                    ],
+                    [
+                        { text: 'ILPED WC [untar]', callback_data: 'yaml_bug_ILPED WC [ untar ]' },
+                        { text: 'ILPED WC [chat]', callback_data: 'yaml_bug_ILPEDD WC2 [ chat ]' }
+                    ],
+                    [
+                        { text: 'ILPED WC [unnes]', callback_data: 'yaml_bug_ILPEDDD WC3 [ Unnes ]' },
+                        { text: 'BYU OPOK', callback_data: 'yaml_bug_byu OPOK' }
+                    ]
+                ]
+            }
+        });
 
-// Simpan message_id pesan terakhir
-userState[chatId].lastMessageId = reply.message_id;
-});
-
-
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
+    });
 
     // Handle callback query untuk memilih bug YAML
     bot.action(/yaml_bug_(.+)/, async (ctx) => {
@@ -416,9 +415,9 @@ userState[chatId].lastMessageId = reply.message_id;
                 bugAddress = 'ava.game.naver.com';
                 bugSubdomain = 'ava.game.naver.com';
                 break;
-            case 'ILPED WC [ Bakrie ]':
-                bugAddress = 'bakrie.ac.id';
-                bugSubdomain = 'bakrie.ac.id';
+            case 'ILPED WC [ untar ]':
+                bugAddress = 'untar.ac.id';
+                bugSubdomain = 'untar.ac.id';
                 break;
             case 'ILPEDD WC2 [ chat ]':
                 bugAddress = 'chat.sociomile.com';
@@ -487,35 +486,35 @@ userState[chatId].lastMessageId = reply.message_id;
 
         // Kirim pilihan bug
         const reply = await ctx.reply('Silakan pilih jenis bug:', {
-    reply_markup: {
-        inline_keyboard: [
-            [
-                { text: 'XL VIDIO', callback_data: 'bug_vidio [ quiz ]' },
-                { text: 'XL VIU', callback_data: 'bug_viu' }
-            ],
-            [
-                { text: 'XL XCV', callback_data: 'bug_XL XCV [ 81 ]' },
-                { text: 'XL XCV WC', callback_data: 'bug_XL XCV WC [ Zoom ]' }
-            ],
-            [
-                { text: 'XL XCL/S [AVA]', callback_data: 'bug_XL XCL/S [ AVA ]' },
-                { text: 'XL XCL/S WC [AVA]', callback_data: 'bug_XL XCL/S WC [ AVA ]' }
-            ],
-            [
-                { text: 'ILPED WC [bakrie]', callback_data: 'bug_ILPED WC [ Bakrie ]' },
-                { text: 'ILPED WC [chat]', callback_data: 'bug_ILPEDD WC2 [ chat ]' }
-            ],
-            [
-                { text: 'ILPED WC [unes]', callback_data: 'bug_ILPEDDD WC3 [ unnes ]' },
-                { text: 'BYU OPOK', callback_data: 'bug_byu OPOK' }
-            ]
-        ]
-    }
-});
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: 'XL VIDIO', callback_data: 'bug_vidio [ quiz ]' },
+                        { text: 'XL VIU', callback_data: 'bug_viu' }
+                    ],
+                    [
+                        { text: 'XL XCV', callback_data: 'bug_XL XCV [ 81 ]' },
+                        { text: 'XL XCV WC', callback_data: 'bug_XL XCV WC [ Zoom ]' }
+                    ],
+                    [
+                        { text: 'XL XCL/S [AVA]', callback_data: 'bug_XL XCL/S [ AVA ]' },
+                        { text: 'XL XCL/S WC [AVA]', callback_data: 'bug_XL XCL/S WC [ AVA ]' }
+                    ],
+                    [
+                        { text: 'ILPED WC [untar]', callback_data: 'bug_ILPED WC [ untar ]' },
+                        { text: 'ILPED WC [chat]', callback_data: 'bug_ILPEDD WC2 [ chat ]' }
+                    ],
+                    [
+                        { text: 'ILPED WC [unes]', callback_data: 'bug_ILPEDDD WC3 [ unnes ]' },
+                        { text: 'BYU OPOK', callback_data: 'bug_byu OPOK' }
+                    ]
+                ]
+            }
+        });
 
-// Simpan message_id pesan terakhir
-userState[chatId].lastMessageId = reply.message_id;
-});
+        // Simpan message_id pesan terakhir
+        userState[chatId].lastMessageId = reply.message_id;
+    });
 
     // Handle callback query untuk memilih bug
     bot.action(/bug_(.+)/, async (ctx) => {
@@ -554,9 +553,9 @@ userState[chatId].lastMessageId = reply.message_id;
                 bugAddress = 'ava.game.naver.com';
                 bugSubdomain = 'ava.game.naver.com';
                 break;
-            case 'ILPED WC [ Bakrie ]':
-                bugAddress = 'bakrie.ac.id';
-                bugSubdomain = 'bakrie.ac.id';
+            case 'ILPED WC [ untar ]':
+                bugAddress = 'untar.ac.id';
+                bugSubdomain = 'untar.ac.id';
                 break;
             case 'ILPEDD WC2 [ chat ]':
                 bugAddress = 'chat.sociomile.com';
