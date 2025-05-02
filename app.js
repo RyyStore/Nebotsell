@@ -26,55 +26,20 @@ const ADMIN = vars.USER_ID; // Sudah di-set di VPS
 const NAMA_STORE = vars.NAMA_STORE || '@RyyStore'; // Sudah di-set di VPS
 const GROUP_ID = "-1002397066993"; // Tambahkan grup ID di sini
 const bot = new Telegraf(BOT_TOKEN, {
-       handlerTimeout: 180_000, // 3 menit
-       telegram: {
-         agent: null, // Gunakan agent default
-         timeout: 30000 // 30 detik timeout
-       }
-     });
+    handlerTimeout: 180_000 
+});
 
 
 const adminIds = ADMIN;
 console.log('Bot initialized');
 
-const db = new sqlite3.Database('./sellvpn.db', sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-       if (err) {
-         console.error('Database connection error:', err);
-         // Coba reconnect setelah 5 detik
-         setTimeout(() => connectDatabase(), 5000);
-       } else {
-         console.log('Connected to SQLite database');
-         // Aktifkan WAL mode untuk performa lebih baik
-         db.run('PRAGMA journal_mode=WAL;');
-       }
-     });
-
-     function connectDatabase() {
-       // Implementasi reconnect
-     }
-     
-     const axiosWithRetry = axios.create({
-       timeout: 10000,
-       retry: 3,
-       retryDelay: (retryCount) => {
-         return retryCount * 1000;
-       }
-     });
-
-     axiosWithRetry.interceptors.response.use(undefined, (err) => {
-       const config = err.config;
-       if (!config || !config.retry) return Promise.reject(err);
-       
-       config.__retryCount = config.__retryCount || 0;
-       if (config.__retryCount >= config.retry) {
-         return Promise.reject(err);
-       }
-       
-       config.__retryCount += 1;
-       return new Promise((resolve) => {
-         setTimeout(() => resolve(axiosWithRetry(config)), config.retryDelay || 1000);
-       });
-     });
+const db = new sqlite3.Database('./sellvpn.db', (err) => {
+  if (err) {
+    console.error('Kesalahan koneksi SQLite3:', err.message);
+  } else {
+    console.log('Terhubung ke SQLite3');
+  }
+});
 
 // Fungsi untuk membulatkan harga khusus 30 hari
 function calculatePrice(hargaPerHari, expDays) {
@@ -84,6 +49,7 @@ function calculatePrice(hargaPerHari, expDays) {
   return hargaPerHari * expDays; // Untuk masa aktif lain, hitung normal
 }
 
+// Di bagian pembuatan tabel Server
 db.run(`CREATE TABLE IF NOT EXISTS Server (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   domain TEXT,
@@ -94,7 +60,8 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
   quota INTEGER,
   iplimit INTEGER,
   batas_create_akun INTEGER,
-  total_create_akun INTEGER
+  total_create_akun INTEGER,
+  hidden BOOLEAN DEFAULT 0
 )`, (err) => {
   if (err) {
     console.error('Kesalahan membuat tabel Server:', err.message);
@@ -741,9 +708,12 @@ async function getServerList(userId) {
   });
 
   const role = user ? user.role : 'member';
+  const isAdmin = adminIds.includes(userId);
 
   const servers = await new Promise((resolve, reject) => {
-    db.all('SELECT * FROM Server', [], (err, rows) => {
+    // Hanya admin yang bisa melihat server yang hidden
+    const query = isAdmin ? 'SELECT * FROM Server' : 'SELECT * FROM Server WHERE hidden = 0';
+    db.all(query, [], (err, rows) => {
       if (err) {
         reject(err);
       } else {
@@ -758,6 +728,60 @@ async function getServerList(userId) {
     harga: role === 'reseller' ? server.harga_reseller : server.harga
   }));
 }
+
+bot.command('hideserver', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length !== 2) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/hideserver <server_id>`', { parse_mode: 'Markdown' });
+  }
+
+  const serverId = args[1];
+
+  db.run("UPDATE Server SET hidden = 1 WHERE id = ?", [serverId], function(err) {
+    if (err) {
+      console.error('⚠️ Kesalahan saat menyembunyikan server:', err.message);
+      return ctx.reply('⚠️ Kesalahan saat menyembunyikan server.', { parse_mode: 'Markdown' });
+    }
+
+    if (this.changes === 0) {
+      return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil disembunyikan.`, { parse_mode: 'Markdown' });
+  });
+});
+
+bot.command('showserver', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length !== 2) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/showserver <server_id>`', { parse_mode: 'Markdown' });
+  }
+
+  const serverId = args[1];
+
+  db.run("UPDATE Server SET hidden = 0 WHERE id = ?", [serverId], function(err) {
+    if (err) {
+      console.error('⚠️ Kesalahan saat menampilkan server:', err.message);
+      return ctx.reply('⚠️ Kesalahan saat menampilkan server.', { parse_mode: 'Markdown' });
+    }
+
+    if (this.changes === 0) {
+      return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil ditampilkan kembali.`, { parse_mode: 'Markdown' });
+  });
+});
 
 bot.command('listreseller', async (ctx) => {
   const userId = ctx.message.from.id;
@@ -1175,7 +1199,9 @@ bot.command('helpadmin', async (ctx) => {
 │ <code>/editauth</code> - Edit auth server         
 │ <code>/editquota</code> - Edit quota server       
 │ <code>/editiplimit</code> - Edit limit IP         
-│ <code>/editlimitcreate</code> - Limit jumlah layanan         
+│ <code>/editlimitcreate</code> - Limit jumlah layanan    
+│ <code>/hideserver</code> - Sembunyikan server
+│ <code>/showserver</code> - Tampilkan server    
 ├─────────────────────────────
 │ <b>MANAJEMEN RESELLER</b>                
 ├─────────────────────────────
@@ -2822,10 +2848,22 @@ async function processTrial(ctx, type, serverId) {
   try {
     let user = await getUserData(userId);
     
-    // Check trial count regardless of balance
-    let trialCount = 0;
-    const maxFreeTrials = 2; // Batas trial gratis
+    // Check if user has sufficient balance (minimum 1000)
+    if (!isAdmin && (!user || user.saldo < 100)) {
+      return ctx.reply('🚫 *Anda harus memiliki saldo minimal 100 perak (tidak memotong saldo) untuk menggunakan trial.*\n\nSilakan topup terlebih dahulu sebelum mencoba trial.', { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' }]
+          ]
+        }
+      });
+    }
     
+
+    let trialCount = 0;
+    let dailyLimit = 5; // Default limit for members
+
     if (!user) {
       console.log('User belum ada di database, menambahkan user baru.');
       await new Promise((resolve, reject) => {
@@ -2843,29 +2881,17 @@ async function processTrial(ctx, type, serverId) {
         );
       });
     } else {
-      // Check trial count
+      // Set higher limit for resellers
+      if (user.role === 'reseller') {
+        dailyLimit = 20;
+      }
+      
       if (user.last_trial_date === today) {
         trialCount = user.trial_count;
       }
-      
-      // Jika trial count melebihi batas gratis, cek saldo
-      if (trialCount >= maxFreeTrials) {
-        if (!isAdmin && (!user || user.saldo < 100)) {
-          return ctx.reply('🚫 *Anda telah menggunakan semua trial gratis (2x).*\n\nSilakan topup untuk membuat akun reguler.', { 
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' }],
-                [{ text: 'BUAT AKUN REGULER', callback_data: 'service_create' }]
-              ]
-            }
-          });
-        }
-      }
     }
 
-    // Jika melebihi batas harian untuk role (5 untuk member, 20 untuk reseller)
-    const dailyLimit = user?.role === 'reseller' ? 20 : 5;
+    // Admin bisa bypass limit
     if (!isAdmin && trialCount >= dailyLimit) {
       console.log(`User ${userId} sudah mencapai batas trial hari ini.`);
       return ctx.reply(`🚫 *Anda sudah mencapai batas maksimal trial hari ini (${dailyLimit} kali).*`, { 
@@ -2920,7 +2946,7 @@ async function processTrial(ctx, type, serverId) {
 ➥ <b>Username</b> : <a href="tg://user?id=${userId}">${username}</a>
 ➥ <b>User ID</b>  : ${userId}
 ➥ <b>Role</b>     : ${isAdmin ? 'Admin 👑' : (user?.role === 'reseller' ? 'Reseller 🛒' : 'Member 👤')}
-➥ <b>Trial Ke</b> : ${trialCount + 1}/${maxFreeTrials} (Gratis)
+➥ <b>Trial Ke</b> : ${trialCount + 1}/${dailyLimit}
 <b>──────────────────────</b>
 ➥ <b>Layanan</b>  : ${type.toUpperCase()}
 <blockquote>➥ <b>Server</b>   : ${server.nama_server}</blockquote>
