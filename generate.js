@@ -1,14 +1,14 @@
 const { Telegraf } = require('telegraf');
-const GROUP_ID = "-1002397066993"; // Group ID for notifications
-const sqlite3 = require('sqlite3').verbose();
 
-// Initialize database
-const db = new sqlite3.Database('./sellvpn.db');
+// Variabel ini akan diisi saat initGenerateBug dipanggil dari file utama
+let localDBInstance;
+let mainVarsInstance;
+// const GROUP_ID = "-1002397066993"; // Diambil dari mainVarsInstance.GROUP_ID
+// const adminUserIds = []; // Diambil dari parameter saat init
 
-// User state tracking
+// User state tracking (lokal untuk generate.js)
 const userState = {};
 
-// Validate VPN link
 function isValidLink(link) {
     try {
         return link && (link.startsWith('vmess://') || link.startsWith('trojan://') || link.startsWith('vless://'));
@@ -18,7 +18,6 @@ function isValidLink(link) {
     }
 }
 
-// Generate link with bug
 function generateBugLink(link, bugAddress, bugSubdomain) {
     try {
         if (link.startsWith('vmess://')) {
@@ -26,61 +25,84 @@ function generateBugLink(link, bugAddress, bugSubdomain) {
             const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
             const config = JSON.parse(decodedData);
 
-            config.add = bugAddress;
+            config.add = bugAddress; // Set alamat utama ke bugAddress
 
+            // Jika bugSubdomain ada, gunakan itu untuk host dan SNI
+            // Jika tidak, host dan SNI bisa sama dengan bugAddress atau host asli (tergantung implementasi asli V2Ray/XRay client)
+            // Untuk konsistensi, jika bugSubdomain ada, kita set host dan sni.
+            // Jika tidak, client biasanya akan menggunakan 'add' untuk koneksi dan 'host' (jika ada) untuk SNI.
+            // Beberapa client mungkin butuh 'sni' diisi eksplisit.
             if (bugSubdomain) {
-                const originalHost = config.host || config.add;
-                config.host = `${bugSubdomain}.${originalHost}`;
-                config.sni = config.host;
+                const originalHostForSni = config.host || config.add; // Ambil host asli jika ada, atau alamat lama
+                config.host = `${bugSubdomain}.${originalHostForSni}`; // Ini bisa jadi subdomain.hostasli.com atau subdomain.bugaddress.com
+                                                                    // Umumnya, bugSubdomain itu sendiri sudah menjadi host yang diinginkan.
+                                                                    // Jika bugSubdomain dimaksudkan sebagai prefix: `${bugSubdomain}.${config.add}`
+                                                                    // Kita asumsikan bugSubdomain adalah full host jika diberikan, atau prefix ke original host.
+                                                                    // Untuk kasus umum: bugSubdomain menjadi Host header dan SNI
+                config.host = bugSubdomain; // Host header untuk WS
+                config.sni = bugSubdomain;  // SNI untuk TLS
+            } else {
+                // Jika tidak ada bugSubdomain, pastikan host dan sni (jika ada) juga mengarah ke bugAddress
+                // atau biarkan kosong agar client menggunakan 'add'
+                if (config.tls === 'tls' || config.security === 'tls' || (config.streamSettings && config.streamSettings.security === 'tls')) {
+                     config.sni = config.host || bugAddress; // SNI diisi dengan host header atau bugAddress jika host kosong
+                }
+                if (config.streamSettings && config.streamSettings.network === 'ws' && config.streamSettings.wsSettings) {
+                    config.host = config.host || bugAddress; // Host header untuk WebSocket
+                }
             }
+
 
             const newConfig = JSON.stringify(config);
             return `vmess://${Buffer.from(newConfig).toString('base64')}`;
-        } 
-        else if (link.startsWith('trojan://')) {
-            const url = new URL(link);
-            const params = new URLSearchParams(url.search);
-            
-            const originalHost = params.get('host') || url.hostname;
-            const newUrl = new URL(link);
-            newUrl.hostname = bugAddress;
-            
-            if (bugSubdomain) {
-                const newHost = `${bugSubdomain}.${originalHost}`;
-                params.set('host', newHost);
-                params.set('sni', newHost);
-            }
-            
-            newUrl.search = params.toString();
-            return newUrl.toString();
         }
-        else if (link.startsWith('vless://')) {
+        else if (link.startsWith('trojan://') || link.startsWith('vless://')) {
             const url = new URL(link);
             const params = new URLSearchParams(url.search);
-            
-            const newUrl = new URL(link);
-            newUrl.hostname = bugAddress;
-            
-            if (bugSubdomain) {
-                const originalHost = params.get('host') || url.hostname;
-                const newHost = `${bugSubdomain}.${originalHost}`;
-                
-                params.set('sni', newHost);
+
+            const originalHostname = url.hostname; // Simpan hostname asli dari URL VLESS/Trojan
+            url.hostname = bugAddress; // Ganti hostname utama dengan bugAddress
+
+            if (bugSubdomain) { // bugSubdomain akan menjadi SNI dan Host header (jika ws)
+                params.set('sni', bugSubdomain);
                 if (params.get('type') === 'ws') {
-                    params.set('host', newHost);
+                    params.set('host', bugSubdomain);
+                }
+            } else {
+                // Jika tidak ada bugSubdomain, SNI dan host header (jika ws) bisa diisi dengan bugAddress
+                // atau hostname asli dari link VLESS/Trojan (tergantung kebutuhan bug)
+                // Umumnya, jika bugAddress adalah IP, SNI diisi dengan hostname asli.
+                // Jika bugAddress adalah domain, SNI bisa diisi dengan bugAddress atau hostname asli.
+                // Kita akan set SNI ke hostname asli jika bugAddress adalah IP, atau ke bugAddress jika bugAddress domain.
+                // Dan host header ke bugAddress jika ws.
+                const isIpAddress = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bugAddress);
+                if (params.has('sni') || params.has('peer')) { // Jika sudah ada SNI/peer, biarkan, kecuali akan dioverride bugSubdomain
+                     params.set('sni', params.get('sni') || params.get('peer') || (isIpAddress ? originalHostname : bugAddress));
+                } else {
+                     params.set('sni', isIpAddress ? originalHostname : bugAddress);
+                }
+
+                if (params.get('type') === 'ws') {
+                    if (params.has('host')) { // Jika sudah ada host header, biarkan
+                        params.set('host', params.get('host') || bugAddress);
+                    } else {
+                        params.set('host', bugAddress);
+                    }
                 }
             }
-            
-            newUrl.search = params.toString();
-            return newUrl.toString();
+            // Hapus parameter peer jika ada, karena sni lebih umum
+            if(params.has('peer')) params.delete('peer');
+
+            url.search = params.toString();
+            return url.toString();
         }
     } catch (error) {
         console.error('Error generating bug link:', error);
         return null;
     }
+    return null; // Fallback
 }
 
-// Get link type
 function getLinkType(link) {
     if (link.startsWith('vmess://')) return 'VMESS';
     if (link.startsWith('trojan://')) return 'TROJAN';
@@ -88,7 +110,6 @@ function getLinkType(link) {
     return 'UNKNOWN';
 }
 
-// Get host from link
 function getHost(link) {
     try {
         if (link.startsWith('vmess://')) {
@@ -98,7 +119,7 @@ function getHost(link) {
         else if (link.startsWith('trojan://') || link.startsWith('vless://')) {
             const url = new URL(link);
             const params = new URLSearchParams(url.search);
-            return params.get('host') || url.hostname || 'UNKNOWN';
+            return params.get('host') || params.get('sni') || url.hostname || 'UNKNOWN';
         }
         return 'UNKNOWN';
     } catch (error) {
@@ -107,14 +128,12 @@ function getHost(link) {
     }
 }
 
-// Get UUID from link
 function getUUID(link) {
     try {
         if (link.startsWith('vmess://')) {
             const config = JSON.parse(Buffer.from(link.replace('vmess://', ''), 'base64').toString('utf-8'));
             return config.id || 'UNKNOWN';
         }
-        
         const url = new URL(link);
         return url.username || new URLSearchParams(url.search).get('id') || 'UNKNOWN';
     } catch (error) {
@@ -123,19 +142,18 @@ function getUUID(link) {
     }
 }
 
-// Get user role from database
 async function getUserRole(userId) {
     return new Promise((resolve, reject) => {
-        db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
+        if (!localDBInstance) return reject(new Error("Database (localDBInstance) not initialized in generate.js"));
+        localDBInstance.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
             if (err) reject(err);
             else resolve(row?.role || 'member');
         });
     });
 }
 
-// Escape HTML special characters
 function escapeHtml(text) {
-    if (!text) return '';
+    if (text === null || typeof text === 'undefined') return '';
     return text.toString()
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -144,31 +162,34 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
-// Send clean notification to group
-// Send clean notification to group
 async function sendGroupNotification(bot, username, userId, bugCode, linkType, userRole, date) {
-    // Mapping callback_data to display text
-    const bugDisplayMap = {
-        'vidio': 'XL VIDIO [quiz]',
-        'viu': 'XL VIU',
-        'vip': 'XL VIP [81]',
-        'xcv_wc': 'XL XCV WC [Zoom]',
-        'xcl_ava': 'XL UTS [AVA]',
-        'xcl_ava_wc': 'XL UTS WC [AVA]',
-        'xcl_graph': 'XL UTS [Graph]',
-        'xcl_graph_wc': 'XL UTS WC [Graph]',
-        'ilped_untar': 'ILPED WC [untar]',
-        'ilped_chat': 'ILPED WC [chat]',
-        'ilped_unnes': 'ILPED WC [unnes]',
-        'byu': 'BYU OPOK'
-    };
+    let displayName = bugCode;
+    try {
+        if (!localDBInstance) throw new Error("DB not init for sendGroupNotification");
+        const bugInfo = await new Promise((resolve, reject) => {
+            localDBInstance.get('SELECT display_name FROM Bugs WHERE bug_code = ?', [bugCode], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        if (bugInfo && bugInfo.display_name) {
+            displayName = bugInfo.display_name;
+        }
+    } catch (dbError) {
+        console.error("Error fetching display_name for bug_code:", bugCode, dbError);
+    }
 
-    // Get display name (convert to lowercase for case-insensitive matching)
-    const displayName = bugDisplayMap[bugCode.toLowerCase()] || bugCode;
-
-    const userDisplay = username 
-        ? `<a href="tg://user?id=${userId}">${escapeHtml(username)}</a>` 
+    const userDisplay = username
+        ? `<a href="tg://user?id=${userId}">${escapeHtml(username)}</a>`
         : `User <code>${userId}</code>`;
+
+    const botName = mainVarsInstance.NAMA_STORE || 'PayVpnBot';
+    const groupIdForNotif = mainVarsInstance.GROUP_ID; // GROUP_ID dari file utama
+
+    if (!groupIdForNotif) {
+        console.warn("GROUP_ID for notification is not set in mainVarsInstance.");
+        return;
+    }
 
     const message = `
 <b>🛠️ Generate Bug Success</b>
@@ -179,10 +200,10 @@ async function sendGroupNotification(bot, username, userId, bugCode, linkType, u
 <b>➥ Role:</b> <code>${escapeHtml(userRole)}</code>
 <b>➥ Date:</b> <code>${escapeHtml(date)}</code>
 ──────────────────────
-<i>Notification by PayVpnBot</i>`;
+<i>Notification by ${botName}</i>`;
 
     try {
-        await bot.telegram.sendMessage(GROUP_ID, message, { 
+        await bot.telegram.sendMessage(groupIdForNotif, message, {
             parse_mode: 'HTML',
             disable_web_page_preview: true
         });
@@ -191,11 +212,12 @@ async function sendGroupNotification(bot, username, userId, bugCode, linkType, u
     }
 }
 
-// Initialize generate bug feature
-function initGenerateBug(bot) {
-    console.log('Initializing generate bug feature...');
+function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
+    console.log('Initializing generate bug feature (dynamic)...');
+    localDBInstance = dbInstance;
+    mainVarsInstance = varsObj;
+    // adminUserIds = adminUserIdsArray; // Jika perlu cek admin di dalam generate.js
 
-    // Handle VPN links
     bot.hears(/^(vmess:\/\/|trojan:\/\/|vless:\/\/)/, async (ctx) => {
         const chatId = ctx.chat.id;
         const link = ctx.message.text;
@@ -207,9 +229,7 @@ function initGenerateBug(bot) {
         if (userState[chatId]?.lastMessageId) {
             try {
                 await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) {
-                console.error('Failed to delete previous message:', error.message);
-            }
+            } catch (error) { /* ignore if delete fails */ }
         }
 
         userState[chatId] = { link, step: 'awaiting_action' };
@@ -217,189 +237,185 @@ function initGenerateBug(bot) {
         const reply = await ctx.reply('✅ Valid link! Choose an option:', {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Generate Bug', callback_data: 'generate_bug' }]
+                    [{ text: 'Generate Bug', callback_data: 'generate_bug_dynamic' }]
                 ]
             }
         });
-
         userState[chatId].lastMessageId = reply.message_id;
     });
 
-    // Handler for Generate Bug
-    bot.action('generate_bug', async (ctx) => {
+    bot.action('generate_bug_dynamic', async (ctx) => {
         const chatId = ctx.chat.id;
         const link = userState[chatId]?.link;
 
-        if (!link) return ctx.reply('Please resend the link.');
+        if (!link) {
+            await ctx.answerCbQuery('Please resend the link.', { show_alert: true });
+            // Attempt to delete the current message (which is the button panel)
+             try { await ctx.deleteMessage(); } catch(e) {}
+            const newReply = await ctx.reply('Please resend the link.');
+            userState[chatId] = { lastMessageId: newReply.message_id }; // Update last message ID
+            return;
+        }
+        
+        try {
+            // Try to delete the previous message (which said "Valid link! Choose an option:")
+            if (userState[chatId]?.lastMessageId) {
+                await ctx.deleteMessage(userState[chatId].lastMessageId);
+            } else if (ctx.callbackQuery?.message?.message_id) { // Fallback if lastMessageId wasn't set
+                await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
+            }
+        } catch (error) { /* ignore */ }
 
+
+        try {
+            const activeBugs = await new Promise((resolve, reject) => {
+                localDBInstance.all('SELECT bug_code, display_name FROM Bugs WHERE is_active = 1 ORDER BY display_name ASC', [], (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                });
+            });
+
+            if (!activeBugs || activeBugs.length === 0) {
+                await ctx.answerCbQuery('No active bugs available.', { show_alert: true });
+                const reply = await ctx.reply('No active bugs configured by admin.');
+                userState[chatId].lastMessageId = reply.message_id;
+                return;
+            }
+
+            const bugButtons = activeBugs.map(bug => ({
+                text: bug.display_name,
+                callback_data: `dynamicbugcode_${bug.bug_code}`
+            }));
+
+            const inline_keyboard = [];
+            for (let i = 0; i < bugButtons.length; i += 2) {
+                inline_keyboard.push(bugButtons.slice(i, i + 2));
+            }
+            inline_keyboard.push([{ text: '❌ Cancel & Back to Menu', callback_data: 'cancel_bug_generation_local_and_menu' }]);
+
+            const reply = await ctx.reply('Choose bug type:', {
+                reply_markup: { inline_keyboard }
+            });
+            userState[chatId].lastMessageId = reply.message_id;
+
+        } catch (dbError) {
+            console.error("Error fetching active bugs:", dbError);
+            await ctx.answerCbQuery('Error fetching bug list.', { show_alert: true });
+            const reply = await ctx.reply('Could not retrieve bug list. Please try again later.');
+            userState[chatId].lastMessageId = reply.message_id;
+        }
+    });
+
+    bot.action('cancel_bug_generation_local_and_menu', async (ctx) => {
+        const chatId = ctx.chat.id;
         if (userState[chatId]?.lastMessageId) {
             try {
                 await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) {
-                console.error('Failed to delete message:', error.message);
-            }
+            } catch (error) { /* ignore */ }
         }
-
-        const reply = await ctx.reply('Choose bug type:', {
+        delete userState[chatId];
+        await ctx.answerCbQuery('Bug generation cancelled.');
+        // Trigger main menu from main bot file
+        // This assumes 'main_menu_refresh' is a global callback handled by your main bot file
+        // which then calls sendMainMenu(ctx)
+        return ctx.telegram.sendMessage(chatId, "Returning to main menu...", {
             reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'XL VIDIO [quiz]', callback_data: 'bug_vidio' },
-                        { text: 'XL VIU', callback_data: 'bug_viu' }
-                    ],
-                    [
-                        { text: 'XL VIP [81]', callback_data: 'bug_vip' },
-                        { text: 'XL XCV WC [Zoom]', callback_data: 'bug_xcv_wc' }
-                    ],
-                    [
-                        { text: 'XL UTS [AVA]', callback_data: 'bug_xcl_ava' },
-                        { text: 'XL UTS WC [AVA]', callback_data: 'bug_xcl_ava_wc' }
-                    ],
-                    [
-                        { text: 'XL UTS [Graph]', callback_data: 'bug_xcl_graph' },
-                        { text: 'XL UTS WC [Graph]', callback_data: 'bug_xcl_graph_wc' }
-                    ],
-                    [
-                        { text: 'ILPED WC [untar]', callback_data: 'bug_ilped_untar' },
-                        { text: 'ILPED WC [chat]', callback_data: 'bug_ilped_chat' }
-                    ],
-                    [
-                        { text: 'ILPED WC [unnes]', callback_data: 'bug_ilped_unnes' },
-                        { text: 'BYU OPOK', callback_data: 'bug_byu' }
-                    ]
-                ]
+                inline_keyboard: [[{ text: '🔄 Main Menu', callback_data: 'main_menu_refresh' }]]
             }
-        });
-
-        userState[chatId].lastMessageId = reply.message_id;
+        }).catch(e => console.error("Error sending menu refresh trigger:", e));
     });
 
-    // Handle bug selection
-    bot.action(/bug_(.+)/, async (ctx) => {
+
+    bot.action(/dynamicbugcode_(.+)/, async (ctx) => {
         const chatId = ctx.chat.id;
-        const bugType = ctx.match[1];
+        const selectedBugCode = ctx.match[1];
         const link = userState[chatId]?.link;
 
-        if (!link) return ctx.reply('Link not found. Please resend.');
-
-        let bugAddress, bugSubdomain;
-        switch (bugType) {
-            case 'vidio':
-                bugAddress = 'quiz.vidio.com';
-                bugSubdomain = null;
-                break;
-            case 'viu':
-                bugAddress = 'zaintest.vuclip.com';
-                bugSubdomain = null;
-                break;
-            case 'vip':
-                bugAddress = '104.17.3.81';
-                bugSubdomain = null;
-                break;
-            case 'xcv_wc':
-                bugAddress = 'support.zoom.us';
-                bugSubdomain = 'zoomgov';
-                break;
-            case 'xcl_ava':
-                bugAddress = 'ava.game.naver.com';
-                bugSubdomain = null;
-                break;
-            case 'xcl_ava_wc':
-                bugAddress = 'ava.game.naver.com';
-                bugSubdomain = 'ava.game.naver.com';
-                break;
-            case 'xcl_graph':
-                bugAddress = 'graph.instagram.com';
-                bugSubdomain = null;
-                break;
-            case 'xcl_graph_wc':
-                bugAddress = 'graph.instagram.com';
-                bugSubdomain = 'graph.instagram.com';
-                break;
-            case 'ilped_untar':
-                bugAddress = 'untar.ac.id';
-                bugSubdomain = 'untar.ac.id';
-                break;
-            case 'ilped_chat':
-                bugAddress = 'chat.sociomile.com';
-                bugSubdomain = 'chat.sociomile.com';
-                break;
-            case 'ilped_unnes':
-                bugAddress = 'unnes.ac.id';
-                bugSubdomain = 'unnes.ac.id';
-                break;
-            case 'byu':
-                bugAddress = 'space.byu.id';
-                bugSubdomain = null;
-                break;
-            default:
-                bugAddress = 'unknown.bug.com';
-                bugSubdomain = null;
+        if (!link) {
+            await ctx.answerCbQuery('Link not found. Please resend.', { show_alert: true });
+            try { await ctx.deleteMessage(); } catch(e) {}
+            const newReply = await ctx.reply('Link not found. Please resend.');
+            userState[chatId] = { lastMessageId: newReply.message_id };
+            return;
         }
-
+        
         if (userState[chatId]?.lastMessageId) {
             try {
                 await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) {
-                console.error('Failed to delete message:', error.message);
-            }
+            } catch (error) { /* ignore */ }
         }
 
-        const newLink = generateBugLink(link, bugAddress, bugSubdomain);
-        if (newLink) {
-            const userRole = await getUserRole(ctx.from.id);
 
-            const reply = await ctx.replyWithHTML(`
+        try {
+            const bugDetails = await new Promise((resolve, reject) => {
+                localDBInstance.get('SELECT bug_address, bug_subdomain, display_name FROM Bugs WHERE bug_code = ? AND is_active = 1', [selectedBugCode], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (!bugDetails) {
+                await ctx.answerCbQuery('Selected bug is not available.', { show_alert: true });
+                const reply = await ctx.reply('The selected bug could not be found or is inactive.');
+                userState[chatId].lastMessageId = reply.message_id;
+                return;
+            }
+
+            const { bug_address, bug_subdomain, display_name } = bugDetails;
+            const newLink = generateBugLink(link, bug_address, bug_subdomain);
+
+            if (newLink) {
+                const userRole = await getUserRole(ctx.from.id);
+                const botName = mainVarsInstance.NAMA_STORE || 'PayVpnBot';
+
+                const reply = await ctx.replyWithHTML(`
 <b>🔧 Bug Generated Successfully</b>
 ──────────────────────
-<b>➥ Code:</b> <code>${escapeHtml(bugType.toUpperCase())}</code>
+<b>➥ Bug:</b> <code>${escapeHtml(display_name)}</code>
 <b>➥ Type:</b> <code>${escapeHtml(getLinkType(link))}</code>
-<b>➥ User:</b> ${ctx.from.username ? escapeHtml(ctx.from.username) : `User <code>${ctx.from.id}</code>`}
+<b>➥ User:</b> ${ctx.from.username ? `<a href="tg://user?id=${ctx.from.id}">${escapeHtml(ctx.from.username)}</a>` : `User <code>${ctx.from.id}</code>`}
 <b>➥ Original Host:</b> <code>${escapeHtml(getHost(link))}</code>
 <b>➥ UUID:</b> <code>${escapeHtml(getUUID(link))}</code>
-<b>➥ Bug Server:</b> <code>${escapeHtml(bugAddress)}${bugSubdomain ? ` (${escapeHtml(bugSubdomain)})` : ''}</code>
+<b>➥ Bug Server:</b> <code>${escapeHtml(bug_address)}${bug_subdomain ? ` (${escapeHtml(bug_subdomain)})` : ''}</code>
 ──────────────────────
 <b>🔗 Generated Link:</b>
 <code>${escapeHtml(newLink)}</code>
 ──────────────────────
 <b>📅 Date:</b> <code>${escapeHtml(new Date().toLocaleDateString())}</code>
 ──────────────────────
-<i>Generated by PayVpnBot</i>
+<i>Generated by ${botName}</i>
 `, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '📋 Copy Link', callback_data: 'copy_link' }]
-                    ]
-                }
-            });
-
-            userState[chatId] = { 
-                lastMessageId: reply.message_id,
-                newLink 
-            };
-
-            await sendGroupNotification(
-                bot,
-                ctx.from.username,
-                ctx.from.id,
-                bugType.toUpperCase(),
-                getLinkType(link),
-                userRole,
-                new Date().toLocaleDateString()
-            );
-        } else {
-            await ctx.reply('Failed to generate link. Please try again.');
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📋 Copy Link', callback_data: 'copy_generated_link_local' }],
+                            [{ text: '↩️ Generate Another Bug with Same Link', callback_data: 'generate_bug_dynamic'}],
+                            [{ text: '🏠 Main Menu', callback_data: 'main_menu_refresh' }]
+                        ]
+                    }
+                });
+                userState[chatId] = {
+                    ...userState[chatId],
+                    lastMessageId: reply.message_id,
+                    generatedLink: newLink
+                };
+                await sendGroupNotification(bot, ctx.from.username, ctx.from.id, selectedBugCode, getLinkType(link), userRole, new Date().toLocaleDateString());
+            } else {
+                await ctx.reply('Failed to generate link. Please try again.');
+            }
+        } catch (dbError) {
+            console.error("Error processing dynamic bug selection:", dbError);
+            await ctx.reply('An error occurred while processing the bug.');
         }
     });
 
-    // Handle copy link
-    bot.action('copy_link', async (ctx) => {
+    bot.action('copy_generated_link_local', async (ctx) => {
         const chatId = ctx.chat.id;
-        const newLink = userState[chatId]?.newLink;
+        const generatedLink = userState[chatId]?.generatedLink;
 
-        if (newLink) {
-            await ctx.answerCbQuery('Link copied to clipboard!');
-            await ctx.reply(`Here's your generated link:\n<code>${escapeHtml(newLink)}</code>`, {
+        if (generatedLink) {
+            await ctx.answerCbQuery('Link details below. Tap to copy.', { show_alert: true });
+            // Kirim ulang link agar mudah di-copy, karena Telegram tidak bisa copy dari notifikasi CbQuery
+            await ctx.reply(`Tap to copy:\n<code>${escapeHtml(generatedLink)}</code>`, {
                 parse_mode: 'HTML'
             });
         } else {
@@ -407,7 +423,7 @@ function initGenerateBug(bot) {
         }
     });
 
-    console.log('Bug generation feature initialized.');
+    console.log('Dynamic bug generation feature initialized.');
 }
 
 module.exports = { initGenerateBug };
