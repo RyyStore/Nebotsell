@@ -194,7 +194,7 @@ async function sendGroupNotification(bot, username, userId, bugCode, linkType, u
 <b>🛠️ Generate Bug Success</b>
 ──────────────────────
 <b>➥ User:</b> ${userDisplay}
-<b>➥ Bug:</b> <code>${escapeHtml(displayName)}</code> (${escapeHtml(bugCode)})
+<b>➥ Bug:</b> <code>${escapeHtml(displayName)}</code>
 <b>➥ Type:</b> <code>${escapeHtml(linkType)}</code>
 <b>➥ Role:</b> <code>${escapeHtml(userRole)}</code>
 <b>➥ Date:</b> <code>${escapeHtml(date)}</code>
