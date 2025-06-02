@@ -1,10 +1,12 @@
-const { Telegraf } = require('telegraf');
+// File: ./generate.js
+
+// Telegraf mungkin tidak perlu di-require lagi di sini jika instance bot sudah di-pass
+// const { Telegraf } = require('telegraf');
 
 // Variabel ini akan diisi saat initGenerateBug dipanggil dari file utama
 let localDBInstance;
-let mainVarsInstance;
-// const GROUP_ID = "-1002397066993"; // Diambil dari mainVarsInstance.GROUP_ID
-// const adminUserIds = []; // Diambil dari parameter saat init
+let mainVarsInstance; // Untuk mengakses variabel lain dari .vars.json seperti NAMA_STORE
+let mainNotificationGroupId; // Variabel untuk menyimpan GROUP_ID utama yang di-pass
 
 // User state tracking (lokal untuk generate.js)
 const userState = {};
@@ -25,33 +27,23 @@ function generateBugLink(link, bugAddress, bugSubdomain) {
             const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
             const config = JSON.parse(decodedData);
 
-            config.add = bugAddress; // Set alamat utama ke bugAddress
+            config.add = bugAddress;
 
-            // Jika bugSubdomain ada, gunakan itu untuk host dan SNI
-            // Jika tidak, host dan SNI bisa sama dengan bugAddress atau host asli (tergantung implementasi asli V2Ray/XRay client)
-            // Untuk konsistensi, jika bugSubdomain ada, kita set host dan sni.
-            // Jika tidak, client biasanya akan menggunakan 'add' untuk koneksi dan 'host' (jika ada) untuk SNI.
-            // Beberapa client mungkin butuh 'sni' diisi eksplisit.
             if (bugSubdomain) {
-                const originalHostForSni = config.host || config.add; // Ambil host asli jika ada, atau alamat lama
-                config.host = `${bugSubdomain}.${originalHostForSni}`; // Ini bisa jadi subdomain.hostasli.com atau subdomain.bugaddress.com
-                                                                    // Umumnya, bugSubdomain itu sendiri sudah menjadi host yang diinginkan.
-                                                                    // Jika bugSubdomain dimaksudkan sebagai prefix: `${bugSubdomain}.${config.add}`
-                                                                    // Kita asumsikan bugSubdomain adalah full host jika diberikan, atau prefix ke original host.
-                                                                    // Untuk kasus umum: bugSubdomain menjadi Host header dan SNI
                 config.host = bugSubdomain; // Host header untuk WS
                 config.sni = bugSubdomain;  // SNI untuk TLS
             } else {
-                // Jika tidak ada bugSubdomain, pastikan host dan sni (jika ada) juga mengarah ke bugAddress
-                // atau biarkan kosong agar client menggunakan 'add'
+                // Jika tidak ada bugSubdomain, SNI dan host header (jika ws) perlu dipertimbangkan
+                // berdasarkan konfigurasi asli dan bugAddress.
+                // Jika config asli punya host, gunakan itu untuk SNI jika TLS aktif & tidak ada sni spesifik
                 if (config.tls === 'tls' || config.security === 'tls' || (config.streamSettings && config.streamSettings.security === 'tls')) {
-                     config.sni = config.host || bugAddress; // SNI diisi dengan host header atau bugAddress jika host kosong
+                     config.sni = config.sni || config.host || bugAddress; // Prioritaskan SNI asli, lalu host asli, baru bugAddress
                 }
+                // Untuk WebSocket, host header juga penting
                 if (config.streamSettings && config.streamSettings.network === 'ws' && config.streamSettings.wsSettings) {
-                    config.host = config.host || bugAddress; // Host header untuk WebSocket
+                    config.host = config.host || bugAddress; // Prioritaskan host asli, baru bugAddress
                 }
             }
-
 
             const newConfig = JSON.stringify(config);
             return `vmess://${Buffer.from(newConfig).toString('base64')}`;
@@ -59,39 +51,30 @@ function generateBugLink(link, bugAddress, bugSubdomain) {
         else if (link.startsWith('trojan://') || link.startsWith('vless://')) {
             const url = new URL(link);
             const params = new URLSearchParams(url.search);
+            const originalHostname = url.hostname;
+            url.hostname = bugAddress; // Alamat utama diganti dengan bugAddress
 
-            const originalHostname = url.hostname; // Simpan hostname asli dari URL VLESS/Trojan
-            url.hostname = bugAddress; // Ganti hostname utama dengan bugAddress
-
-            if (bugSubdomain) { // bugSubdomain akan menjadi SNI dan Host header (jika ws)
+            if (bugSubdomain) {
                 params.set('sni', bugSubdomain);
                 if (params.get('type') === 'ws') {
                     params.set('host', bugSubdomain);
                 }
             } else {
-                // Jika tidak ada bugSubdomain, SNI dan host header (jika ws) bisa diisi dengan bugAddress
-                // atau hostname asli dari link VLESS/Trojan (tergantung kebutuhan bug)
-                // Umumnya, jika bugAddress adalah IP, SNI diisi dengan hostname asli.
-                // Jika bugAddress adalah domain, SNI bisa diisi dengan bugAddress atau hostname asli.
-                // Kita akan set SNI ke hostname asli jika bugAddress adalah IP, atau ke bugAddress jika bugAddress domain.
-                // Dan host header ke bugAddress jika ws.
+                // Jika tidak ada bugSubdomain, SNI diisi dengan hostname asli jika bugAddress IP, atau bugAddress jika domain
+                // Host header (jika ws) diisi dengan bugAddress
                 const isIpAddress = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bugAddress);
-                if (params.has('sni') || params.has('peer')) { // Jika sudah ada SNI/peer, biarkan, kecuali akan dioverride bugSubdomain
-                     params.set('sni', params.get('sni') || params.get('peer') || (isIpAddress ? originalHostname : bugAddress));
-                } else {
-                     params.set('sni', isIpAddress ? originalHostname : bugAddress);
+                // Hanya set SNI jika belum ada, atau override jika ada 'peer'
+                if (!params.has('sni') || params.has('peer')) {
+                    params.set('sni', isIpAddress ? originalHostname : bugAddress);
                 }
-
                 if (params.get('type') === 'ws') {
-                    if (params.has('host')) { // Jika sudah ada host header, biarkan
-                        params.set('host', params.get('host') || bugAddress);
-                    } else {
+                     // Hanya set host jika belum ada
+                    if (!params.has('host')) {
                         params.set('host', bugAddress);
                     }
                 }
             }
-            // Hapus parameter peer jika ada, karena sni lebih umum
-            if(params.has('peer')) params.delete('peer');
+            if(params.has('peer')) params.delete('peer'); // Hapus 'peer' karena 'sni' lebih umum
 
             url.search = params.toString();
             return url.toString();
@@ -100,7 +83,7 @@ function generateBugLink(link, bugAddress, bugSubdomain) {
         console.error('Error generating bug link:', error);
         return null;
     }
-    return null; // Fallback
+    return null; // Fallback jika tipe link tidak cocok
 }
 
 function getLinkType(link) {
@@ -114,17 +97,17 @@ function getHost(link) {
     try {
         if (link.startsWith('vmess://')) {
             const config = JSON.parse(Buffer.from(link.replace('vmess://', ''), 'base64').toString('utf-8'));
-            return config.host || config.add || 'UNKNOWN';
+            return config.host || config.add || 'N/A';
         }
         else if (link.startsWith('trojan://') || link.startsWith('vless://')) {
             const url = new URL(link);
             const params = new URLSearchParams(url.search);
-            return params.get('host') || params.get('sni') || url.hostname || 'UNKNOWN';
+            return params.get('host') || params.get('sni') || url.hostname || 'N/A';
         }
-        return 'UNKNOWN';
+        return 'N/A';
     } catch (error) {
         console.error('Error getting host:', error);
-        return 'UNKNOWN';
+        return 'ERROR_PARSING_HOST';
     }
 }
 
@@ -132,22 +115,30 @@ function getUUID(link) {
     try {
         if (link.startsWith('vmess://')) {
             const config = JSON.parse(Buffer.from(link.replace('vmess://', ''), 'base64').toString('utf-8'));
-            return config.id || 'UNKNOWN';
+            return config.id || 'N/A';
         }
+        // Untuk Vless dan Trojan, UUID/Password ada di bagian username dari URL
         const url = new URL(link);
-        return url.username || new URLSearchParams(url.search).get('id') || 'UNKNOWN';
+        return url.username || 'N/A'; // url.username mengambil bagian sebelum '@'
     } catch (error) {
         console.error('Error getting UUID:', error);
-        return 'UNKNOWN';
+        return 'ERROR_PARSING_UUID';
     }
 }
 
 async function getUserRole(userId) {
     return new Promise((resolve, reject) => {
-        if (!localDBInstance) return reject(new Error("Database (localDBInstance) not initialized in generate.js"));
+        if (!localDBInstance) {
+            console.error("[DB_ERROR] localDBInstance not initialized in getUserRole (generate.js)");
+            return reject(new Error("Database (localDBInstance) not initialized in generate.js"));
+        }
         localDBInstance.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
-            if (err) reject(err);
-            else resolve(row?.role || 'member');
+            if (err) {
+                console.error(`[DB_ERROR] Failed to get role for user ${userId}:`, err.message);
+                reject(err);
+            } else {
+                resolve(row?.role || 'member');
+            }
         });
     });
 }
@@ -163,39 +154,47 @@ function escapeHtml(text) {
 }
 
 async function sendGroupNotification(bot, username, userId, bugCode, linkType, userRole, date) {
-    let displayName = bugCode;
+    console.log(`[SEND_GROUP_NOTIF_ENTRY] Fungsi sendGroupNotification dipanggil. Nilai mainNotificationGroupId: '${mainNotificationGroupId}', Tipe: ${typeof mainNotificationGroupId}`); // LOG A
+
+    if (!mainNotificationGroupId) {
+        console.warn("[BUG_GEN_NOTIF] GROUP_ID for notification is not set (mainNotificationGroupId is falsy). NOTIFIKASI TIDAK DIKIRIM."); // LOG B
+        return;
+    }
+
+    let displayName = bugCode; // Default ke bug_code
     try {
-        if (!localDBInstance) throw new Error("DB not init for sendGroupNotification");
-        const bugInfo = await new Promise((resolve, reject) => {
-            localDBInstance.get('SELECT display_name FROM Bugs WHERE bug_code = ?', [bugCode], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
+        if (!localDBInstance) {
+            console.warn("[DB_WARN] localDBInstance not initialized in sendGroupNotification, cannot fetch display_name for bug.");
+        } else {
+            const bugInfo = await new Promise((resolve, reject) => {
+                localDBInstance.get('SELECT display_name FROM Bugs WHERE bug_code = ?', [bugCode], (err, row) => {
+                    if (err) {
+                         console.error(`[DB_ERROR] Failed to fetch display_name for bug_code ${bugCode}:`, err.message);
+                         resolve(null); // Resolve null agar tidak menghentikan notif, fallback ke bug_code
+                    } else {
+                        resolve(row);
+                    }
+                });
             });
-        });
-        if (bugInfo && bugInfo.display_name) {
-            displayName = bugInfo.display_name;
+            if (bugInfo && bugInfo.display_name) {
+                displayName = bugInfo.display_name;
+            }
         }
-    } catch (dbError) {
-        console.error("Error fetching display_name for bug_code:", bugCode, dbError);
+    } catch (dbError) { // Seharusnya error sudah ditangani di promise di atas
+        console.error("[DB_UNEXPECTED_ERROR] Unexpected error fetching display_name for bug_code:", bugCode, dbError.message);
     }
 
     const userDisplay = username
         ? `<a href="tg://user?id=${userId}">${escapeHtml(username)}</a>`
         : `User <code>${userId}</code>`;
 
-    const botName = mainVarsInstance.NAMA_STORE || 'PayVpnBot';
-    const groupIdForNotif = mainVarsInstance.GROUP_ID; // GROUP_ID dari file utama
-
-    if (!groupIdForNotif) {
-        console.warn("GROUP_ID for notification is not set in mainVarsInstance.");
-        return;
-    }
+    const botName = (mainVarsInstance && mainVarsInstance.NAMA_STORE) ? mainVarsInstance.NAMA_STORE : 'RyyStore Bot';
 
     const message = `
 <b>🛠️ Generate Bug Success</b>
 ──────────────────────
-<b>➥User:</b> ${userDisplay}
-<b>➥ Bug:</b> <code>${escapeHtml(displayName)}</code>
+<b>➥ User:</b> ${userDisplay}
+<b>➥ Bug:</b> <code>${escapeHtml(displayName)}</code> (${escapeHtml(bugCode)})
 <b>➥ Type:</b> <code>${escapeHtml(linkType)}</code>
 <b>➥ Role:</b> <code>${escapeHtml(userRole)}</code>
 <b>➥ Date:</b> <code>${escapeHtml(date)}</code>
@@ -203,41 +202,69 @@ async function sendGroupNotification(bot, username, userId, bugCode, linkType, u
 <i>Notification by ${botName}</i>`;
 
     try {
-        await bot.telegram.sendMessage(groupIdForNotif, message, {
+        await bot.telegram.sendMessage(mainNotificationGroupId, message, {
             parse_mode: 'HTML',
             disable_web_page_preview: true
         });
+        console.log(`[BUG_GEN_NOTIF_SUCCESS] Notifikasi berhasil dikirim ke grup ${mainNotificationGroupId} untuk bug ${displayName} (kode: ${bugCode})`); // LOG C
     } catch (error) {
-        console.error('Failed to send notification:', error.message);
+        console.error(`[BUG_GEN_NOTIF_ERROR] Gagal mengirim notifikasi ke grup ${mainNotificationGroupId}:`, error.message, error); // LOG D (Sertakan objek error utuh untuk detail)
     }
 }
 
-function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
-    console.log('Initializing generate bug feature (dynamic)...');
+/**
+ * Menginisialisasi fungsionalitas generate bug.
+ * @param {Telegraf} bot Instance Telegraf.
+ * @param {sqlite3.Database} dbInstance Koneksi database.
+ * @param {Array<number>|number} adminUserIdsArray ID admin atau array ID admin (saat ini tidak digunakan di sini, tapi parameter ada).
+ * @param {object} varsObj Variabel konfigurasi dari .vars.json.
+ * @param {string} passedGroupId ID grup utama untuk notifikasi yang di-pass dari file utama.
+ */
+function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj, passedGroupId) {
+    console.log('----------------------------------------------------------');
+    console.log('[INIT_GENERATE_BUG_ENTRY] Fungsi initGenerateBug dipanggil.'); // LOG 1
     localDBInstance = dbInstance;
     mainVarsInstance = varsObj;
-    // adminUserIds = adminUserIdsArray; // Jika perlu cek admin di dalam generate.js
+
+    console.log(`[INIT_GENERATE_BUG_ARGS] Nilai passedGroupId yang diterima: '${passedGroupId}', Tipe: ${typeof passedGroupId}`); // LOG 2
+
+    mainNotificationGroupId = passedGroupId; // Simpan GROUP_ID yang di-pass
+
+    if (mainNotificationGroupId && typeof mainNotificationGroupId === 'string' && mainNotificationGroupId.trim() !== '') {
+        console.log(`[INIT_GENERATE_BUG_SUCCESS] mainNotificationGroupId berhasil di-set menjadi: '${mainNotificationGroupId}'`); // LOG 3
+    } else {
+        console.warn(`[INIT_GENERATE_BUG_WARN] GAGAL: mainNotificationGroupId adalah '${mainNotificationGroupId}' (tipe: ${typeof mainNotificationGroupId}). Notifikasi grup mungkin tidak berfungsi.`); // LOG 4 (lebih detail)
+    }
+    console.log('----------------------------------------------------------');
 
     bot.hears(/^(vmess:\/\/|trojan:\/\/|vless:\/\/)/, async (ctx) => {
         const chatId = ctx.chat.id;
         const link = ctx.message.text;
 
         if (!isValidLink(link)) {
-            return ctx.reply('Invalid link. Please try again.');
+            try { await ctx.deleteMessage(); } catch(e) { /* ignore */ }
+            const reply = await ctx.reply('❌ Link tidak valid. Mohon kirim link vmess://, trojan://, atau vless:// yang benar.');
+            userState[chatId] = { ...userState[chatId], lastBotMessageIdForInvalidLink: reply.message_id };
+            return;
         }
 
+        if (userState[chatId]?.lastBotMessageIdForInvalidLink) {
+            try { await ctx.telegram.deleteMessage(chatId, userState[chatId].lastBotMessageIdForInvalidLink); } catch (e) { /* ignore */ }
+            delete userState[chatId].lastBotMessageIdForInvalidLink;
+        }
+
+        try { await ctx.deleteMessage(); } catch(e) { /* ignore */ }
+
         if (userState[chatId]?.lastMessageId) {
-            try {
-                await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) { /* ignore if delete fails */ }
+            try { await ctx.telegram.deleteMessage(chatId, userState[chatId].lastMessageId); } catch (error) { /* ignore */ }
         }
 
         userState[chatId] = { link, step: 'awaiting_action' };
 
-        const reply = await ctx.reply('✅ Valid link! Choose an option:', {
+        const reply = await ctx.reply('✅ Link valid! Silakan pilih aksi:', {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Generate Bug', callback_data: 'generate_bug_dynamic' }]
+                    [{ text: '🔩 Generate Bug', callback_data: 'generate_bug_dynamic' }]
                 ]
             }
         });
@@ -249,25 +276,27 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
         const link = userState[chatId]?.link;
 
         if (!link) {
-            await ctx.answerCbQuery('Please resend the link.', { show_alert: true });
-            // Attempt to delete the current message (which is the button panel)
-             try { await ctx.deleteMessage(); } catch(e) {}
-            const newReply = await ctx.reply('Please resend the link.');
-            userState[chatId] = { lastMessageId: newReply.message_id }; // Update last message ID
+            await ctx.answerCbQuery('Link tidak ditemukan. Mohon kirim ulang link config Anda.', { show_alert: true });
+            try { await ctx.deleteMessage(); } catch(e) {}
+            const newReply = await ctx.reply('⚠️ Sesi berakhir atau link tidak ditemukan. Silakan kirim ulang link config Anda.');
+            userState[chatId] = { lastMessageId: newReply.message_id };
             return;
         }
         
+        if (userState[chatId]?.lastMessageId) {
+            try { await ctx.telegram.deleteMessage(chatId, userState[chatId].lastMessageId); } catch (error) { /* ignore */ }
+        } else if (ctx.callbackQuery?.message?.message_id) {
+            try { await ctx.deleteMessage(); } catch(e) { /* ignore */ }
+        }
+
         try {
-            // Try to delete the previous message (which said "Valid link! Choose an option:")
-            if (userState[chatId]?.lastMessageId) {
-                await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } else if (ctx.callbackQuery?.message?.message_id) { // Fallback if lastMessageId wasn't set
-                await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
+            if (!localDBInstance) {
+                console.error("[DB_ERROR] localDBInstance not initialized in generate_bug_dynamic action.");
+                await ctx.answerCbQuery('Error: Database tidak terinisialisasi.', { show_alert: true });
+                const reply = await ctx.reply('⚠️ Terjadi masalah dengan database. Silakan hubungi admin.');
+                userState[chatId] = { ...userState[chatId], lastMessageId: reply.message_id };
+                return;
             }
-        } catch (error) { /* ignore */ }
-
-
-        try {
             const activeBugs = await new Promise((resolve, reject) => {
                 localDBInstance.all('SELECT bug_code, display_name FROM Bugs WHERE is_active = 1 ORDER BY display_name ASC', [], (err, rows) => {
                     if (err) reject(err);
@@ -276,9 +305,9 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
             });
 
             if (!activeBugs || activeBugs.length === 0) {
-                await ctx.answerCbQuery('No active bugs available.', { show_alert: true });
-                const reply = await ctx.reply('No active bugs configured by admin.');
-                userState[chatId].lastMessageId = reply.message_id;
+                await ctx.answerCbQuery('Tidak ada bug aktif yang tersedia saat ini.', { show_alert: true });
+                const reply = await ctx.reply('ℹ️ Tidak ada bug yang dikonfigurasi oleh admin atau semua bug sedang tidak aktif.');
+                userState[chatId] = { ...userState[chatId], lastMessageId: reply.message_id, step: 'awaiting_action' };
                 return;
             }
 
@@ -291,40 +320,43 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
             for (let i = 0; i < bugButtons.length; i += 2) {
                 inline_keyboard.push(bugButtons.slice(i, i + 2));
             }
-            inline_keyboard.push([{ text: '❌ Cancel & Back to Menu', callback_data: 'cancel_bug_generation_local_and_menu' }]);
+            inline_keyboard.push([{ text: '❌ Batal & Kembali ke Menu', callback_data: 'cancel_bug_generation_local_and_menu' }]);
 
-            const reply = await ctx.reply('Choose bug type:', {
+            const reply = await ctx.reply('⚙️ Silakan pilih jenis bug yang akan digunakan:', {
                 reply_markup: { inline_keyboard }
             });
             userState[chatId].lastMessageId = reply.message_id;
 
         } catch (dbError) {
-            console.error("Error fetching active bugs:", dbError);
-            await ctx.answerCbQuery('Error fetching bug list.', { show_alert: true });
-            const reply = await ctx.reply('Could not retrieve bug list. Please try again later.');
-            userState[chatId].lastMessageId = reply.message_id;
+            console.error("Error fetching active bugs:", dbError.message);
+            await ctx.answerCbQuery('Terjadi error saat mengambil daftar bug.', { show_alert: true });
+            const reply = await ctx.reply('⚠️ Gagal mengambil daftar bug. Silakan coba beberapa saat lagi.');
+            userState[chatId] = { ...userState[chatId], lastMessageId: reply.message_id, step: 'awaiting_action' };
         }
     });
 
     bot.action('cancel_bug_generation_local_and_menu', async (ctx) => {
         const chatId = ctx.chat.id;
         if (userState[chatId]?.lastMessageId) {
-            try {
-                await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) { /* ignore */ }
+            try { await ctx.telegram.deleteMessage(chatId, userState[chatId].lastMessageId); } catch (error) { /* ignore */ }
         }
         delete userState[chatId];
-        await ctx.answerCbQuery('Bug generation cancelled.');
-        // Trigger main menu from main bot file
-        // This assumes 'main_menu_refresh' is a global callback handled by your main bot file
-        // which then calls sendMainMenu(ctx)
-        return ctx.telegram.sendMessage(chatId, "Returning to main menu...", {
-            reply_markup: {
-                inline_keyboard: [[{ text: '🔄 Main Menu', callback_data: 'main_menu_refresh' }]]
-            }
-        }).catch(e => console.error("Error sending menu refresh trigger:", e));
+        await ctx.answerCbQuery('Pembuatan bug dibatalkan.');
+        
+        try {
+            // Kirim pesan baru dengan tombol kembali ke menu utama
+            // karena pesan sebelumnya (jika ada) sudah dihapus
+            await ctx.reply("Dibatalkan. Kembali ke menu utama.", {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔄 Menu Utama', callback_data: 'main_menu_refresh' }]]
+                }
+            });
+        } catch (e) {
+            console.error("Error sending cancel message with menu refresh trigger:", e.message);
+            // Fallback jika reply gagal
+            await ctx.telegram.sendMessage(chatId, "Proses dibatalkan. Silakan ketik /menu untuk kembali.").catch(err => console.error("Fallback cancel message failed:", err));
+        }
     });
-
 
     bot.action(/dynamicbugcode_(.+)/, async (ctx) => {
         const chatId = ctx.chat.id;
@@ -332,21 +364,27 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
         const link = userState[chatId]?.link;
 
         if (!link) {
-            await ctx.answerCbQuery('Link not found. Please resend.', { show_alert: true });
+            await ctx.answerCbQuery('Link config tidak ditemukan. Mohon kirim ulang link config Anda.', { show_alert: true });
             try { await ctx.deleteMessage(); } catch(e) {}
-            const newReply = await ctx.reply('Link not found. Please resend.');
+            const newReply = await ctx.reply('⚠️ Sesi berakhir atau link config tidak ditemukan. Silakan kirim ulang link config Anda.');
             userState[chatId] = { lastMessageId: newReply.message_id };
             return;
         }
         
         if (userState[chatId]?.lastMessageId) {
-            try {
-                await ctx.deleteMessage(userState[chatId].lastMessageId);
-            } catch (error) { /* ignore */ }
+            try { await ctx.telegram.deleteMessage(chatId, userState[chatId].lastMessageId); } catch (error) { /* ignore */ }
+        } else if (ctx.callbackQuery?.message?.message_id) {
+            try { await ctx.deleteMessage(); } catch(e) { /* ignore */ }
         }
 
-
         try {
+            if (!localDBInstance) {
+                console.error("[DB_ERROR] localDBInstance not initialized in dynamicbugcode_ action.");
+                await ctx.answerCbQuery('Error: Database tidak terinisialisasi.', { show_alert: true });
+                const reply = await ctx.reply('⚠️ Terjadi masalah dengan database. Silakan hubungi admin.');
+                userState[chatId] = { ...userState[chatId], lastMessageId: reply.message_id };
+                return;
+            }
             const bugDetails = await new Promise((resolve, reject) => {
                 localDBInstance.get('SELECT bug_address, bug_subdomain, display_name FROM Bugs WHERE bug_code = ? AND is_active = 1', [selectedBugCode], (err, row) => {
                     if (err) reject(err);
@@ -355,9 +393,9 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
             });
 
             if (!bugDetails) {
-                await ctx.answerCbQuery('Selected bug is not available.', { show_alert: true });
-                const reply = await ctx.reply('The selected bug could not be found or is inactive.');
-                userState[chatId].lastMessageId = reply.message_id;
+                await ctx.answerCbQuery('Bug yang dipilih tidak tersedia atau tidak aktif.', { show_alert: true });
+                const reply = await ctx.reply('⚠️ Bug yang Anda pilih tidak dapat ditemukan atau sedang tidak aktif.');
+                userState[chatId] = { ...userState[chatId], lastMessageId: reply.message_id, step: 'awaiting_action' };
                 return;
             }
 
@@ -365,46 +403,51 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
             const newLink = generateBugLink(link, bug_address, bug_subdomain);
 
             if (newLink) {
-                const userRole = await getUserRole(ctx.from.id);
-                const botName = mainVarsInstance.NAMA_STORE || 'PayVpnBot';
+                const userRole = await getUserRole(ctx.from.id).catch(err => 'member'); // Default ke member jika role gagal diambil
+                const botName = (mainVarsInstance && mainVarsInstance.NAMA_STORE) ? mainVarsInstance.NAMA_STORE : 'RyyStore Bot';
 
                 const reply = await ctx.replyWithHTML(`
-<b>🔧 Bug Generated Successfully</b>
+<b>🔧 Bug Berhasil Digenerate</b>
 ──────────────────────
 <b>➥ Bug:</b> <code>${escapeHtml(display_name)}</code>
-<b>➥ Type:</b> <code>${escapeHtml(getLinkType(link))}</code>
-<b>➥ User:</b> ${ctx.from.username ? `<a href="tg://user?id=${ctx.from.id}">${escapeHtml(ctx.from.username)}</a>` : `User <code>${ctx.from.id}</code>`}
-<b>➥ Original Host:</b> <code>${escapeHtml(getHost(link))}</code>
-<b>➥ UUID:</b> <code>${escapeHtml(getUUID(link))}</code>
-<b>➥ Bug Server:</b> <code>${escapeHtml(bug_address)}${bug_subdomain ? ` (${escapeHtml(bug_subdomain)})` : ''}</code>
+<b>➥ Tipe Config:</b> <code>${escapeHtml(getLinkType(link))}</code>
+<b>➥ Pengguna:</b> ${ctx.from.username ? `<a href="tg://user?id=${ctx.from.id}">${escapeHtml(ctx.from.username)}</a>` : `User <code>${ctx.from.id}</code>`}
+<b>➥ Host Asli:</b> <code>${escapeHtml(getHost(link))}</code>
+<b>➥ UUID/Password:</b> <code>${escapeHtml(getUUID(link))}</code>
+<b>➥ Server Bug:</b> <code>${escapeHtml(bug_address)}${bug_subdomain ? ` (SNI/Host: ${escapeHtml(bug_subdomain)})` : ''}</code>
 ──────────────────────
-<b>🔗 Generated Link:</b>
+<b>🔗 Link Config Baru:</b>
 <code>${escapeHtml(newLink)}</code>
 ──────────────────────
-<b>📅 Date:</b> <code>${escapeHtml(new Date().toLocaleDateString())}</code>
+<b>📅 Tanggal:</b> <code>${escapeHtml(new Date().toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' }))}</code>
 ──────────────────────
 <i>Generated by ${botName}</i>
 `, {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: '📋 Copy Link', callback_data: 'copy_generated_link_local' }],
-                            [{ text: '↩️ Generate Another Bug with Same Link', callback_data: 'generate_bug_dynamic'}],
-                            [{ text: '🏠 Main Menu', callback_data: 'main_menu_refresh' }]
+                            [{ text: '📋 Salin Link', callback_data: 'copy_generated_link_local' }],
+                            [{ text: '↩️ Generate Lagi (Link Sama)', callback_data: 'generate_bug_dynamic'}],
+                            [{ text: '🏠 Menu Utama', callback_data: 'main_menu_refresh' }]
                         ]
-                    }
+                    },
+                    disable_web_page_preview: true
                 });
                 userState[chatId] = {
                     ...userState[chatId],
                     lastMessageId: reply.message_id,
-                    generatedLink: newLink
+                    generatedLink: newLink,
+                    step: 'bug_generated'
                 };
-                await sendGroupNotification(bot, ctx.from.username, ctx.from.id, selectedBugCode, getLinkType(link), userRole, new Date().toLocaleDateString());
+                
+                // Log sebelum memanggil sendGroupNotification
+                console.log(`[ACTION_DYNAMICBUGCODE] Memanggil sendGroupNotification. Nilai mainNotificationGroupId saat ini: '${mainNotificationGroupId}'`); // LOG 5
+                await sendGroupNotification(bot, ctx.from.username, ctx.from.id, selectedBugCode, getLinkType(link), userRole, new Date().toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' }));
             } else {
-                await ctx.reply('Failed to generate link. Please try again.');
+                await ctx.reply('⚠️ Gagal menggenerate link config dengan bug. Kemungkinan format link config awal tidak sepenuhnya standar atau ada error internal.');
             }
         } catch (dbError) {
-            console.error("Error processing dynamic bug selection:", dbError);
-            await ctx.reply('An error occurred while processing the bug.');
+            console.error("Error processing dynamic bug selection:", dbError.message, dbError.stack); // Tambahkan stack trace
+            await ctx.reply('⚠️ Terjadi kesalahan saat memproses bug yang Anda pilih.');
         }
     });
 
@@ -413,17 +456,16 @@ function initGenerateBug(bot, dbInstance, adminUserIdsArray, varsObj) {
         const generatedLink = userState[chatId]?.generatedLink;
 
         if (generatedLink) {
-            await ctx.answerCbQuery('Link details below. Tap to copy.', { show_alert: true });
-            // Kirim ulang link agar mudah di-copy, karena Telegram tidak bisa copy dari notifikasi CbQuery
-            await ctx.reply(`Tap to copy:\n<code>${escapeHtml(generatedLink)}</code>`, {
+            await ctx.answerCbQuery('Link ada di pesan di bawah. Tap untuk menyalin.', { show_alert: false });
+            await ctx.reply(`Tap link di bawah untuk menyalin:\n<code>${escapeHtml(generatedLink)}</code>`, {
                 parse_mode: 'HTML'
             });
         } else {
-            await ctx.answerCbQuery('No link available to copy.');
+            await ctx.answerCbQuery('Tidak ada link yang tersedia untuk disalin. Silakan generate bug terlebih dahulu.', { show_alert: true });
         }
     });
 
-    console.log('Dynamic bug generation feature initialized.');
+    console.log('[INIT_GENERATE_BUG_FINAL] Dynamic bug generation feature initialization sequence complete.');
 }
 
 module.exports = { initGenerateBug };
