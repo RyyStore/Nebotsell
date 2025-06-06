@@ -28,17 +28,7 @@ async function renewssh(username, exp, limitip, serverId) {
         .then(response => {
           if (response.data.status === "success") {
             const sshData = response.data.data;
-            const msg = `
-🌟 *RENEW SSH PREMIUM* 🌟
-
-🔹 *Informasi Akun*
-┌─────────────────────────────
-│ Username: \`${username}\`
-│ Kadaluarsa: \`${sshData.expired}\`
-│ Batas IP: \`${sshData.ip_limit} IP\`
-└─────────────────────────────
-✅ Akun ${username} berhasil diperbarui
-✨ Selamat menggunakan layanan kami! ✨
+            const msg = `✅ Akun ${username} berhasil diperbarui
 `;
          
               console.log('SSH account renewed successfully');
@@ -82,18 +72,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
           .then(response => {
             if (response.data.status === "success") {
               const vmessData = response.data.data;
-              const msg = `
-  🌟 *RENEW VMESS PREMIUM* 🌟
-  
-  🔹 *Informasi Akun*
-  ┌─────────────────────────────
-  │ Username: \`${username}\`
-  │ Kadaluarsa: \`${vmessData.expired}\`
-  │ Kuota: \`${vmessData.quota}\`
-  │ Batas IP: \`${vmessData.ip_limit} IP\`
-  └─────────────────────────────
-  ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+              const msg = `✅ Akun ${username} berhasil diperbarui
   `;
                 console.log('VMess account renewed successfully');
                 return resolve(msg);
@@ -135,18 +114,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
           .then(response => {
             if (response.data.status === "success") {
               const vlessData = response.data.data;
-              const msg = `
-  🌟 *RENEW VLESS PREMIUM* 🌟
-  
-  🔹 *Informasi Akun*
-  ┌─────────────────────────────
-  │ Username: \`${username}\`
-  │ Kadaluarsa: \`${vlessData.expired}\`
-  │ Kuota: \`${vlessData.quota}\`
-  │ Batas IP: \`${vlessData.ip_limit} IP\`
-  └─────────────────────────────
-  ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+              const msg = `✅ Akun ${username} berhasil diperbarui
   `;
            
                 console.log('VLess account renewed successfully');
@@ -189,18 +157,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
           .then(response => {
             if (response.data.status === "success") {
               const trojanData = response.data.data;
-              const msg = `
-  🌟 *RENEW TROJAN PREMIUM* 🌟
-  
-  🔹 *Informasi Akun*
-  ┌─────────────────────────────
-  │ Username: \`${username}\`
-  │ Kadaluarsa: \`${trojanData.expired}\`
-  │ Kuota: \`${trojanData.quota}\`
-  │ Batas IP: \`${trojanData.ip_limit} IP\`
-  └─────────────────────────────
-  ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+              const msg = `✅ Akun ${username} berhasil diperbarui
   `;
            
                 console.log('Trojan account renewed successfully');
@@ -243,18 +200,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
           .then(response => {
             if (response.data.status === "success") {
               const shadowsocksData = response.data.data;
-              const msg = `
-  🌟 *RENEW SHADOWSOCKS PREMIUM* 🌟
-  
-  🔹 *Informasi Akun*
-  ┌─────────────────────────────
-  │ Username: \`${username}\`
-  │ Kadaluarsa: \`${shadowsocksData.expired}\`
-  │ Kuota: \`${shadowsocksData.quota}\`
-  │ Batas IP: \`${shadowsocksData.ip_limit} IP\`
-  └─────────────────────────────
-  ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+              const msg = `✅ Akun ${username} berhasil diperbarui
   `;
            
                 console.log('Shadowsocks account renewed successfully');
