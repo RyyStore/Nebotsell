@@ -15,6 +15,7 @@ app.use(express.urlencoded({ extended: true }));
 const { createssh, createvmess, createvless, createtrojan } = require('./modules/create');
 const { trialssh, trialvmess, trialvless, trialtrojan } = require('./modules/trial');
 const { renewssh, renewvmess, renewvless, renewtrojan } = require('./modules/renew');
+const { callDeleteAPI } = require('./modules/delete'); 
 
 const fs = require('fs');
 const vars = JSON.parse(fs.readFileSync('./.vars.json', 'utf8'));
@@ -818,7 +819,82 @@ async function checkAndUpdateUserRole(userId, toppedUpAmount = 0) {
   }
 }
 
+// TAMBAHKAN FUNGSI BARU INI
+async function sendDeleteRefundNotification(deleterUserId, deletedAccount, refundAmount) {
+    let deleterDisplayName = `User ID ${deleterUserId}`;
+    try {
+        const userInfo = await bot.telegram.getChat(deleterUserId);
+        deleterDisplayName = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ID ${deleterUserId}`);
+    } catch (e) {
+        console.warn(`Gagal mendapatkan info chat untuk notifikasi delete user ${deleterUserId}: ${e.message}`);
+    }
 
+    const message = `
+──────────────────────  
+Notifikasi Hapus & Refund Saldo
+──────────────────────
+👤 Aksi oleh: <a href="tg://user?id=${deleterUserId}">${escapeHtml(deleterDisplayName)}</a>
+──────────────────────
+ Detail Akun yang Dihapus:
+  ➥ Layanan: ${deletedAccount.protocol.toUpperCase()}
+  ➥ Server: ${escapeHtml(deletedAccount.nama_server)}
+  ➥ Username: <code>${escapeHtml(deletedAccount.account_username)}</code>
+──────────────────────
+ Saldo Dikembalikan: <b>Rp ${refundAmount.toLocaleString('id-ID')}</b>
+`;
+
+    // Kirim ke Grup
+    if (GROUP_ID) {
+        try {
+            await bot.telegram.sendMessage(GROUP_ID, message, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+            console.error(`Gagal kirim notif delete ke grup untuk user ${deleterUserId}:`, error.message);
+        }
+    }
+
+    // Kirim ke Admin Utama
+    const mainAdminId = Array.isArray(ADMIN) ? ADMIN[0] : ADMIN;
+    if (mainAdminId && mainAdminId !== GROUP_ID) {
+        try {
+            await bot.telegram.sendMessage(mainAdminId, message, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+            console.error(`Gagal kirim notif delete ke admin untuk user ${deleterUserId}:`, error.message);
+        }
+    }
+}
+
+// TAMBAHKAN FUNGSI BARU INI
+async function adjustResellerQuotaOnDelete(accountObject) {
+    // Hanya kurangi kuota jika akun yang dihapus adalah akun bulanan (>= 30 hari)
+    if (accountObject.duration_days >= 30) {
+        const creatorUserId = accountObject.created_by_user_id;
+        console.log(`[ADJUST_QUOTA] Akun bulanan (${accountObject.account_username}) dihapus. Mengurangi kuota untuk user ID: ${creatorUserId}`);
+        
+        try {
+            await new Promise((resolve, reject) => {
+                const sql = `
+                    UPDATE users 
+                    SET 
+                        accounts_created_30days = CASE WHEN accounts_created_30days > 0 THEN accounts_created_30days - 1 ELSE 0 END,
+                        total_accounts_created = CASE WHEN total_accounts_created > 0 THEN total_accounts_created - 1 ELSE 0 END
+                    WHERE user_id = ?
+                `;
+                db.run(sql, [creatorUserId], function(err) {
+                    if (err) reject(err);
+                    else {
+                        if (this.changes > 0) {
+                            console.log(`[ADJUST_QUOTA] Kuota untuk user ${creatorUserId} berhasil dikurangi.`);
+                        }
+                        resolve();
+                    }
+                });
+            });
+        } catch (error) {
+            console.error(`[ADJUST_QUOTA] Gagal mengurangi kuota untuk user ${creatorUserId}:`, error);
+            // Tidak menghentikan proses refund, hanya catat error
+        }
+    }
+}
 
 async function sendUserNotificationTopup(userId, amount, uniqueAmount, bonusAmount = 0) {
   const userOriginalTopup = amount;
@@ -1502,15 +1578,19 @@ async function sendMainMenu(ctx) {
     }
 
     // Keyboard tetap sama seperti kode asli Anda
-    const keyboard = [
-     [ 
+const keyboard = [
+    [
         { text: '🛰️ PANEL SERVER', callback_data: 'panel_server_start' },
         { text: '💰 TOPUP SALDO', callback_data: 'topup_saldo' }
-      ],
-      [ // Baris kedua untuk tombol Refresh
+    ],
+    [
+       { text: '🗂️ HAPUS AKUN (REFUND SALDO)', callback_data: 'my_accounts' }
+    ],
+    [ 
+       
         { text: 'REFRESH', callback_data: 'refresh_menu' }
-      ]
-    ];
+    ]
+];
 
     if (isAdmin) {
       keyboard.push([ 
@@ -1703,15 +1783,19 @@ async function sendMainMenuToUser(targetUserId) {
     }
 
     // Keyboard tetap sama seperti kode asli Anda
-    const keyboard = [
-      [ 
+const keyboard = [
+    [
         { text: '🛰️ PANEL SERVER', callback_data: 'panel_server_start' },
         { text: '💰 TOPUP SALDO', callback_data: 'topup_saldo' }
-      ],
-      [ 
+    ],
+    [
+       { text: '🗂️ HAPUS AKUN (REFUND SALDO)', callback_data: 'my_accounts' }
+    ],
+    [ 
+       
         { text: 'REFRESH', callback_data: 'refresh_menu' }
-      ]
-    ];
+    ]
+];
 
     if (isAdmin) {
       keyboard.push([ 
@@ -1964,7 +2048,309 @@ Gunakan perintah di atas dengan format yang benar.
   userMessages[userId] = sentHelpMessage.message_id;
 });
 
-// Tambahkan handler untuk tombol
+// GANTI handler my_accounts LAMA Anda dengan yang BARU ini
+bot.action('my_accounts', async (ctx) => {
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery("Memuat daftar server Anda...");
+
+    try {
+        // Query untuk mengambil server unik yang dimiliki pengguna
+        const userServers = await new Promise((resolve, reject) => {
+            const query = `
+                SELECT DISTINCT s.id, s.nama_server
+                FROM created_accounts ca
+                JOIN Server s ON ca.server_id = s.id
+                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND ca.expiry_date > DATETIME('now', 'localtime')
+                ORDER BY s.nama_server ASC
+            `;
+            db.all(query, [userId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        if (userServers.length === 0) {
+            return ctx.editMessageText("Anda tidak memiliki akun aktif saat ini.", {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'kembali' }]] }
+            });
+        }
+        
+        const message = "🗂️ Akun Saya\n\nSilakan pilih server untuk melihat daftar akun Anda:";
+        
+        // Buat tombol untuk setiap server
+        const keyboard = userServers.map(server => {
+            return [{ text: `🛰️ ${server.nama_server}`, callback_data: `myacc_server_${server.id}` }];
+        });
+
+        keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'kembali' }]);
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+
+    } catch (error) {
+        console.error("Error mengambil server milik pengguna:", error);
+        await ctx.editMessageText("⚠️ Terjadi kesalahan saat memuat daftar akun Anda.");
+    }
+});
+
+// TAMBAHKAN handler BARU ini untuk menampilkan protokol per server
+bot.action(/myacc_server_(\d+)/, async (ctx) => {
+    const userId = ctx.from.id;
+    const serverId = parseInt(ctx.match[1]);
+    await ctx.answerCbQuery("Memuat protokol...");
+
+    try {
+        // Ambil nama server untuk judul
+        const server = await new Promise((resolve, reject) => {
+            db.get("SELECT nama_server FROM Server WHERE id = ?", [serverId], (err, row) => err || !row ? reject() : resolve(row));
+        });
+
+        // Query untuk mengambil protokol unik di server yang dipilih
+        const userProtocols = await new Promise((resolve, reject) => {
+            const query = `
+                SELECT DISTINCT protocol FROM created_accounts
+                WHERE created_by_user_id = ? AND server_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
+                ORDER BY protocol ASC
+            `;
+            db.all(query, [userId, serverId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        const message = `📡 Server: ${server.nama_server}**\n\nSilakan pilih protokol:`;
+
+        const keyboard = userProtocols.map(p => {
+            return [{ text: ` ${p.protocol.toUpperCase()}`, callback_data: `myacc_proto_${serverId}_${p.protocol}` }];
+        });
+        
+        keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]);
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+
+    } catch (error) {
+        console.error("Error mengambil protokol milik pengguna:", error);
+        await ctx.editMessageText("⚠️ Terjadi kesalahan.");
+    }
+});
+
+// TAMBAHKAN handler BARU ini untuk menampilkan daftar akun final
+bot.action(/myacc_proto_(\d+)_(.+)/, async (ctx) => {
+    const userId = ctx.from.id;
+    const serverId = parseInt(ctx.match[1]);
+    const protocol = ctx.match[2];
+    await ctx.answerCbQuery();
+
+    try {
+        const userAccounts = await new Promise((resolve, reject) => {
+            const query = `
+                SELECT id, account_username, expiry_date FROM created_accounts
+                WHERE created_by_user_id = ? AND server_id = ? AND protocol = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
+                ORDER BY expiry_date ASC
+            `;
+            db.all(query, [userId, serverId, protocol], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        const server = await new Promise((resolve, reject) => {
+            db.get("SELECT nama_server FROM Server WHERE id = ?", [serverId], (err, row) => err || !row ? reject() : resolve(row));
+        });
+
+        let message = `📜 Daftar Akun ${protocol.toUpperCase()} \nServer: <b>${server.nama_server}</b>\n\n`;
+        const keyboard = [];
+
+        userAccounts.forEach(acc => {
+            const expiry = new Date(acc.expiry_date);
+            const dateString = expiry.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+            message += `👤  <b>${acc.account_username}</b>\n   ➥  Expired: ${dateString}\n\n`;
+            keyboard.push([{ text: `Hapus & Refund: ${acc.account_username}`, callback_data: `delete_refund_request_${acc.id}` }]);
+        });
+
+        keyboard.push([{ text: '🔙 Kembali Pilih Protokol', callback_data: `myacc_server_${serverId}` }]);
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: keyboard },
+            disable_web_page_preview: true
+        });
+
+    } catch (error) {
+        console.error("Error menampilkan daftar akun final:", error);
+        await ctx.editMessageText("⚠️ Terjadi kesalahan.");
+    }
+});
+
+// GANTI SEPENUHNYA HANDLER INI DENGAN VERSI BARU
+bot.action(/delete_refund_request_(\d+)/, async (ctx) => {
+    const accountId = parseInt(ctx.match[1]);
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery();
+
+    try {
+        const acc = await new Promise((resolve, reject) => {
+            const query = `
+                SELECT ca.*, s.harga, s.harga_reseller FROM created_accounts ca
+                JOIN Server s ON ca.server_id = s.id
+                WHERE ca.id = ? AND ca.created_by_user_id = ?`;
+            db.get(query, [accountId, userId], (err, row) => (err || !row) ? reject(new Error("Akun tidak ditemukan atau bukan milik Anda.")) : resolve(row));
+        });
+
+        const user = await new Promise((resolve, reject) => {
+            db.get("SELECT role FROM users WHERE user_id = ?", [userId], (err, row) => (err || !row) ? reject(new Error("User tidak ditemukan.")) : resolve(row));
+        });
+
+        const now = new Date();
+        const expiry = new Date(acc.expiry_date);
+        if (now >= expiry) {
+            return ctx.answerCbQuery("Akun ini sudah kedaluwarsa, tidak ada refund.", { show_alert: true });
+        }
+
+        // ======================================================================
+        //          PERBAIKAN LOGIKA PERHITUNGAN REFUND DIMULAI DI SINI
+        // ======================================================================
+
+        // 1. Hitung total harga yang dibayar saat pembuatan akun
+        const hargaPerHari = user.role === 'reseller' ? acc.harga_reseller : acc.harga;
+        const totalHargaAwal = calculatePrice(hargaPerHari, acc.duration_days);
+
+        // 2. Hitung berapa hari yang sudah terpakai (minimal 1 hari)
+        const creationDate = new Date(acc.creation_date);
+        const msTerpakai = now.getTime() - creationDate.getTime();
+        let hariTerpakai = Math.ceil(msTerpakai / (1000 * 60 * 60 * 24));
+        if (hariTerpakai < 1) {
+            hariTerpakai = 1; // Pemakaian minimal dihitung 1 hari
+        }
+
+        // 3. Hitung biaya yang sudah terpakai
+        const biayaTerpakai = hariTerpakai * hargaPerHari;
+
+        // 4. Hitung jumlah refund yang sebenarnya
+        let refundAmount = totalHargaAwal - biayaTerpakai;
+        if (refundAmount < 0) {
+            refundAmount = 0; // Pastikan refund tidak minus
+        }
+        
+        // Pembulatan nominal refund ke ratusan terdekat untuk kebersihan
+        refundAmount = Math.floor(refundAmount / 100) * 100;
+        
+        // ======================================================================
+        //                      AKHIR PERBAIKAN LOGIKA
+        // ======================================================================
+        
+        if (refundAmount <= 0) {
+            return ctx.answerCbQuery("Tidak ada sisa masa aktif yang bisa di-refund.", { show_alert: true });
+        }
+
+        userState[userId] = { refundAmount, accountId };
+
+        const message = `
+⚠️ <b>Konfirmasi Hapus & Refund</b> ⚠️
+Anda yakin ingin menghapus akun: <b>${acc.account_username}</b>?
+
+- Total Bayar: Rp ${totalHargaAwal.toLocaleString('id-ID')}
+- Terpakai: ~${hariTerpakai} hari (Rp ${biayaTerpakai.toLocaleString('id-ID')})
+- Sisa Saldo Kembali: <b>Rp ${refundAmount.toLocaleString('id-ID')}</b>
+
+Tindakan ini tidak bisa dibatalkan.
+        `;
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '✅ Ya, Hapus & Refund', callback_data: `delete_refund_confirm` }],
+                    [{ text: '❌ Batal', callback_data: 'manage_my_accounts' }]
+                ]
+            }
+        });
+    } catch (e) {
+        console.error(e);
+        await ctx.answerCbQuery(`Error: ${e.message}`, { show_alert: true });
+    }
+});
+
+
+// GANTI SEPENUHNYA HANDLER delete_refund_confirm ANDA DENGAN INI
+bot.action('delete_refund_confirm', async (ctx) => {
+    const userId = ctx.from.id; // Ini adalah ID pengguna yang melakukan aksi hapus
+    const state = userState[userId];
+
+    if (!state || !state.refundAmount || !state.accountId) {
+        return ctx.answerCbQuery("Sesi tidak valid atau telah kedaluwarsa.", { show_alert: true });
+    }
+    
+    const { refundAmount, accountId } = state;
+    delete userState[userId];
+
+    await ctx.editMessageText("⏳ Menghapus akun di server dan memproses refund, mohon tunggu...");
+
+    try {
+        // Ambil info lengkap akun yang akan dihapus untuk notifikasi dan penyesuaian kuota
+        const acc = await new Promise((resolve, reject) => {
+            const query = `
+                SELECT ca.*, s.nama_server FROM created_accounts ca
+                JOIN Server s ON ca.server_id = s.id
+                WHERE ca.id = ?`;
+            db.get(query, [accountId], (err, row) => (err || !row) ? reject(new Error("Akun tidak ditemukan lagi di DB.")) : resolve(row));
+        });
+
+        // 1. Panggil API untuk hapus akun di server
+        await callDeleteAPI(acc.protocol, acc.account_username, acc.server_id);
+        
+        // 2. Jika di server sukses, proses di database bot dalam satu transaksi
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.run("BEGIN TRANSACTION;");
+                
+                // Kembalikan saldo ke pengguna yang menghapus
+                db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [refundAmount, userId]);
+                
+                // Kurangi slot server
+                db.run("UPDATE Server SET total_create_akun = total_create_akun - 1 WHERE id = ? AND total_create_akun > 0", [acc.server_id]);
+                
+                // Hapus data akun
+                db.run("DELETE FROM created_accounts WHERE id = ?", [accountId], async function(err) {
+                    if (err) return; // Jika gagal, akan di-rollback di bawah
+                    
+                    // PENYESUAIAN KUOTA RESELLER DIPANGGIL DI SINI
+                    // Ini dijalankan setelah delete berhasil tapi sebelum commit
+                    await adjustResellerQuotaOnDelete(acc);
+                });
+
+                db.run("COMMIT;", (err) => {
+                    if (err) {
+                        console.error("Gagal commit transaksi delete & refund:", err);
+                        db.run("ROLLBACK;");
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        });
+
+        await ctx.editMessageText(`✅ Akun <b>${acc.account_username}</b> berhasil dihapus.\nSaldo sebesar <b>Rp ${refundAmount.toLocaleString('id-ID')}</b> telah dikembalikan.`, {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]] }
+        });
+
+        // Panggil FUNGSI NOTIFIKASI BARU DI SINI
+        await sendDeleteRefundNotification(userId, acc, refundAmount);
+
+    } catch (error) {
+        console.error("Error saat eksekusi hapus & refund:", error);
+        await ctx.editMessageText(`🚫 Gagal: ${error.message}`, {
+             reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts' }]] }
+        });
+    }
+});
+
 bot.action('admin_examples', async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.reply(`
