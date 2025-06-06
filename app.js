@@ -331,6 +331,10 @@ async function displayTutorialDashboard(ctx) {
           { text: 'CARA TRIAL', url: 'https://t.me/internetgratisin/24' }
       ],
       [
+          { text: 'CARA RENEW', url: 'https://t.me/internetgratisin/132' },
+          { text: 'CARA DELETE', url: 'https://t.me/internetgratisin/13' }
+      ],
+      [
           { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' }
       ],
       [{ text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }]
@@ -385,6 +389,62 @@ async function displayTutorialDashboard(ctx) {
           console.error('Error mengirim pesan fallback panduan (displayTutorialDashboard):', fallbackError);
       }
   }
+}
+
+// TAMBAHKAN FUNGSI BARU INI
+async function sendAdminStats(ctx) {
+    try {
+        await ctx.reply('📊 Mengambil data statistik, mohon tunggu...');
+
+        const now = new Date();
+        const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+
+        // Jalankan semua query database secara paralel untuk efisiensi
+        const [
+            userStats,
+            serverStats,
+            activeAccountsCount,
+            newAccountsCount,
+            totalBalance
+        ] = await Promise.all([
+            // Query untuk statistik pengguna
+            new Promise((resolve) => db.get("SELECT COUNT(*) as total, SUM(CASE WHEN role = 'reseller' THEN 1 ELSE 0 END) as resellers FROM users", (_, r) => resolve(r))),
+            // Query untuk statistik slot server
+            new Promise((resolve) => db.get("SELECT SUM(total_create_akun) as used, SUM(batas_create_akun) as total FROM Server", (_, r) => resolve(r))),
+            // Query untuk total akun aktif
+            new Promise((resolve) => db.get("SELECT COUNT(*) as count FROM created_accounts WHERE is_active = 1 AND expiry_date > ?", [now.toISOString()], (_, r) => resolve(r))),
+            // Query untuk akun baru dalam 24 jam
+            new Promise((resolve) => db.get("SELECT COUNT(*) as count FROM created_accounts WHERE creation_date >= ?", [twentyFourHoursAgo], (_, r) => resolve(r))),
+            // Query untuk total saldo semua pengguna
+            new Promise((resolve) => db.get("SELECT SUM(saldo) as total FROM users", (_, r) => resolve(r)))
+        ]);
+
+        const memberCount = (userStats.total || 0) - (userStats.resellers || 0);
+        const slotPercentage = (serverStats.total > 0) ? ((serverStats.used / serverStats.total) * 100).toFixed(1) : 0;
+
+        // Susun pesan statistik
+        let message = `📊 *DASHBOARD STATISTIK ADMIN*\n`;
+        message += `_(Diperbarui: ${now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })})_\n\n`;
+
+        message += `📈 *PENGGUNA*\n`;
+        message += `   - Total Pengguna: *${userStats.total || 0}*\n`;
+        message += `   - Reseller Aktif: *${userStats.resellers || 0}*\n`;
+        message += `   - Member Aktif: *${memberCount || 0}*\n\n`;
+
+        message += `🛰️ *AKUN & SERVER*\n`;
+        message += `   - Total Akun Aktif: *${activeAccountsCount.count || 0}*\n`;
+        message += `   - Slot Terpakai: *${serverStats.used || 0} / ${serverStats.total || 0} (${slotPercentage}%)*\n`;
+        message += `   - Akun Dibuat (24 Jam): *${newAccountsCount.count || 0}*\n\n`;
+        
+        message += `💰 *FINANSIAL*\n`;
+        message += `   - Total Saldo Pengguna: *Rp ${(totalBalance.total || 0).toLocaleString('id-ID')}*\n`;
+
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error("Gagal mengambil statistik admin:", error);
+        await ctx.reply("⚠️ Terjadi kesalahan saat memuat data statistik.");
+    }
 }
 
 async function checkResellerAccountQuota() {
@@ -831,7 +891,7 @@ async function sendDeleteRefundNotification(deleterUserId, deletedAccount, refun
 
     const message = `
 ──────────────────────  
-Notifikasi Hapus & Refund Saldo
+⟨ Notifikasi Hapus Akun ⟩
 ──────────────────────
 👤 Aksi oleh: <a href="tg://user?id=${deleterUserId}">${escapeHtml(deleterDisplayName)}</a>
 ──────────────────────
@@ -849,16 +909,6 @@ Notifikasi Hapus & Refund Saldo
             await bot.telegram.sendMessage(GROUP_ID, message, { parse_mode: 'HTML', disable_web_page_preview: true });
         } catch (error) {
             console.error(`Gagal kirim notif delete ke grup untuk user ${deleterUserId}:`, error.message);
-        }
-    }
-
-    // Kirim ke Admin Utama
-    const mainAdminId = Array.isArray(ADMIN) ? ADMIN[0] : ADMIN;
-    if (mainAdminId && mainAdminId !== GROUP_ID) {
-        try {
-            await bot.telegram.sendMessage(mainAdminId, message, { parse_mode: 'HTML', disable_web_page_preview: true });
-        } catch (error) {
-            console.error(`Gagal kirim notif delete ke admin untuk user ${deleterUserId}:`, error.message);
         }
     }
 }
@@ -944,7 +994,7 @@ async function sendRenewNotification(userId, userRole, protocol, serverName, acc
 
     const message = `
 ──────────────────────
-Perpanjangan Akun Sukses
+⟨ Perpanjangan Akun Sukses ⟩
 ──────────────────────
 👤 Pengguna: <a href="tg://user?id=${userId}">${escapeHtml(userDisplayName)}</a>
 🎖️ Role: ${roleText}
@@ -968,16 +1018,6 @@ Perpanjangan Akun Sukses
         }
     }
 
-    // Kirim ke Admin
-    // (Array.isArray(ADMIN) ? ADMIN[0] : ADMIN) digunakan untuk mengambil admin utama jika ADMIN adalah sebuah array
-    const mainAdminId = Array.isArray(ADMIN) ? ADMIN[0] : ADMIN;
-    if (mainAdminId && mainAdminId !== GROUP_ID) { // Hindari kirim dua kali jika admin = grup
-        try {
-            await bot.telegram.sendMessage(mainAdminId, message, { parse_mode: 'HTML', disable_web_page_preview: true });
-        } catch (error) {
-            console.error(`Gagal kirim notif perpanjangan ke admin untuk user ${userId}:`, error.message);
-        }
-    }
 }
 
 async function sendAdminNotificationTopup(username, userId, amount, uniqueAmount, bonusAmount = 0) {
@@ -1001,7 +1041,7 @@ async function sendAdminNotificationTopup(username, userId, amount, uniqueAmount
 ➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}
 ──────────────────────
 `;
-// ... (sisa fungsi)
+
   try {
     await bot.telegram.sendMessage(ADMIN, adminMessage, { parse_mode: 'Markdown' });
     console.log(`✅ Notifikasi top-up berhasil dikirim ke admin`);
@@ -1186,6 +1226,13 @@ async function getServerList(userId) {
     harga: role === 'reseller' ? server.harga_reseller : server.harga
   }));
 }
+
+bot.command('stats', async (ctx) => {
+    if (!adminIds.includes(ctx.from.id)) {
+        return ctx.reply('🚫 Anda tidak memiliki izin.');
+    }
+    await sendAdminStats(ctx);
+});
 
 bot.command('resetslotserver', async (ctx) => {
     const userId = ctx.from.id;
@@ -2048,19 +2095,40 @@ Gunakan perintah di atas dengan format yang benar.
   userMessages[userId] = sentHelpMessage.message_id;
 });
 
-// GANTI handler my_accounts LAMA Anda dengan yang BARU ini
+// GANTI SEPENUHNYA handler 'my_accounts' LAMA Anda dengan yang BARU ini
 bot.action('my_accounts', async (ctx) => {
     const userId = ctx.from.id;
-    await ctx.answerCbQuery("Memuat daftar server Anda...");
+    await ctx.answerCbQuery("Memuat akun Anda...");
 
     try {
-        // Query untuk mengambil server unik yang dimiliki pengguna
+        // --- BAGIAN 1: Mengambil rekap jumlah akun per protokol ---
+        const protocolCounts = { SSH: 0, VMESS: 0, VLESS: 0, TROJAN: 0 };
+        const countQuery = `
+            SELECT protocol, COUNT(*) as count 
+            FROM created_accounts 
+            WHERE created_by_user_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
+            GROUP BY protocol
+        `;
+        const counts = await new Promise((resolve, reject) => {
+            db.all(countQuery, [userId], (err, rows) => err ? reject(err) : resolve(rows));
+        });
+
+        // Masukkan hasil query ke dalam objek rekap
+        counts.forEach(row => {
+            // Menggunakan .toUpperCase() untuk mencocokkan key di objek
+            const protocolName = row.protocol.toUpperCase();
+            if (protocolCounts.hasOwnProperty(protocolName)) {
+                protocolCounts[protocolName] = row.count;
+            }
+        });
+
+        // --- BAGIAN 2: Mengambil daftar server unik yang dimiliki pengguna ---
         const userServers = await new Promise((resolve, reject) => {
             const query = `
                 SELECT DISTINCT s.id, s.nama_server
                 FROM created_accounts ca
                 JOIN Server s ON ca.server_id = s.id
-                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND ca.expiry_date > DATETIME('now', 'localtime')
+                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
                 ORDER BY s.nama_server ASC
             `;
             db.all(query, [userId], (err, rows) => {
@@ -2075,12 +2143,27 @@ bot.action('my_accounts', async (ctx) => {
             });
         }
         
-        const message = "🗂️ Akun Saya\n\nSilakan pilih server untuk melihat daftar akun Anda:";
+        // --- BAGIAN 3: Menyusun pesan dan keyboard ---
+        let message = `<b>🗂️ Akun Saya</b>\n\n`;
+        message += `SSH: <b>${protocolCounts.SSH} Akun</b>\n`;
+        message += `VMESS: <b>${protocolCounts.VMESS} Akun</b>\n`;
+        message += `VLESS: <b>${protocolCounts.VLESS} Akun</b>\n`;
+        message += `TROJAN: <b>${protocolCounts.TROJAN} Akun</b>\n\n`;
+        message += `Silakan pilih server untuk melihat detail akun Anda:`;
         
-        // Buat tombol untuk setiap server
-        const keyboard = userServers.map(server => {
-            return [{ text: `🛰️ ${server.nama_server}`, callback_data: `myacc_server_${server.id}` }];
-        });
+        // Buat keyboard 2 kolom (kanan-kiri)
+        const keyboard = [];
+        for (let i = 0; i < userServers.length; i += 2) {
+            const row = [];
+            // Tombol pertama dalam baris
+            row.push({ text: `🛰️ ${userServers[i].nama_server}`, callback_data: `myacc_server_${userServers[i].id}` });
+            
+            // Cek jika ada tombol kedua untuk baris yang sama
+            if (userServers[i + 1]) {
+                row.push({ text: `🛰️ ${userServers[i + 1].nama_server}`, callback_data: `myacc_server_${userServers[i + 1].id}` });
+            }
+            keyboard.push(row);
+        }
 
         keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'kembali' }]);
 
@@ -2095,7 +2178,6 @@ bot.action('my_accounts', async (ctx) => {
     }
 });
 
-// TAMBAHKAN handler BARU ini untuk menampilkan protokol per server
 bot.action(/myacc_server_(\d+)/, async (ctx) => {
     const userId = ctx.from.id;
     const serverId = parseInt(ctx.match[1]);
@@ -2120,13 +2202,52 @@ bot.action(/myacc_server_(\d+)/, async (ctx) => {
             });
         });
 
-        const message = `📡 Server: ${server.nama_server}**\n\nSilakan pilih protokol:`;
+        // --- TAMBAHAN KODE BARU DIMULAI DI SINI ---
+        // Query untuk menghitung jumlah akun per protokol di server yang dipilih
+        const protocolCountsRaw = await new Promise((resolve, reject) => {
+            const countQuery = `
+                SELECT protocol, COUNT(*) as count
+                FROM created_accounts
+                WHERE created_by_user_id = ? AND server_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
+                GROUP BY protocol
+            `;
+            db.all(countQuery, [userId, serverId], (err, rows) => err ? reject(err) : resolve(rows));
+        });
+
+        // Inisialisasi objek untuk menyimpan jumlah akun per protokol
+        const protocolCounts = {
+            SSH: 0,
+            VMESS: 0,
+            VLESS: 0,
+            TROJAN: 0
+        };
+
+        // Mengisi objek dengan data dari database
+        protocolCountsRaw.forEach(row => {
+            const protocolName = row.protocol.toUpperCase();
+            if (protocolCounts.hasOwnProperty(protocolName)) {
+                protocolCounts[protocolName] = row.count;
+            }
+        });
+        // --- TAMBAHAN KODE BARU BERAKHIR DI SINI ---
+
+        let message = `📡 Server: ${server.nama_server}\n\n`;
+        // --- MENGGUNAKAN DATA REKAP DI PESAN ---
+        message += `SSH: ${protocolCounts.SSH}\n`;
+        message += `VMESS: ${protocolCounts.VMESS}\n`;
+        message += `VLESS: ${protocolCounts.VLESS}\n`;
+        message += `TROJAN: ${protocolCounts.TROJAN}\n\n`;
+        // ----------------------------------------
+        message += `Silakan pilih protokol:`;
 
         const keyboard = userProtocols.map(p => {
             return [{ text: ` ${p.protocol.toUpperCase()}`, callback_data: `myacc_proto_${serverId}_${p.protocol}` }];
         });
         
-        keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]);
+        // Pastikan callback untuk kembali ke "Kelola Akun Saya" jika Anda sudah menerapkan saran sebelumnya.
+        // Jika belum, biarkan tetap `my_accounts` seperti kode lama Anda.
+        keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]); // Jika sudah pakai my_accounts_list
+        // Atau: keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]); // Jika belum pakai my_accounts_list
 
         await ctx.editMessageText(message, {
             parse_mode: 'HTML',
@@ -4023,6 +4144,9 @@ async function sendAdminMenu(ctx) {
       { text: 'ℹ️ Detail Server', callback_data: 'detailserver' }
     ],
     [
+       { text: '📊 Statistik', callback_data: 'admin_stats' } 
+    ],
+    [
       { text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }
     ]
   ];
@@ -4045,6 +4169,11 @@ async function sendAdminMenu(ctx) {
     }
   }
 }
+
+bot.action('admin_stats', async (ctx) => {
+    await ctx.answerCbQuery();
+    await sendAdminStats(ctx);
+});
 
 bot.action('list_resellers', async (ctx) => {
   const userId = ctx.from.id;
