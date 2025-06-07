@@ -15,6 +15,8 @@
 <pre><code>npm install bull
 npm install -g bull</code></pre>
 
+<pre><code>npm install js-yaml</code></pre>
+
 ### TESTED ON OS 
 - UBUNTU 20.04 22 24.04 24.10
 - DEBIAN 10 11 12
