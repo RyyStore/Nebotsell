@@ -243,6 +243,47 @@ bot.command(['start', 'menu'], async (ctx) => {
   await displayTutorialDashboard(ctx);
 });
 
+
+
+async function isUsernameAvailable(username, serverId, protocol) {
+    return new Promise(async (resolve, reject) => { // Tambahkan async di sini
+        try {
+            // Dapatkan domain dari serverId yang diberikan
+            const serverInfo = await new Promise((res, rej) => {
+                db.get('SELECT domain FROM Server WHERE id = ?', [serverId], (err, row) => {
+                    if (err) rej(err);
+                    else if (!row) rej(new Error(`Server ID ${serverId} not found.`));
+                    else res(row);
+                });
+            });
+            const serverDomain = serverInfo.domain;
+
+            // Sekarang, cari akun yang aktif di server MANAPUN yang memiliki domain yang sama
+            const query = `
+                SELECT ca.id FROM created_accounts ca
+                JOIN Server s ON ca.server_id = s.id
+                WHERE ca.account_username = ? AND s.domain = ? AND ca.protocol = ? AND ca.is_active = 1 AND ca.expiry_date > datetime('now', 'localtime')
+                UNION ALL
+                SELECT ps.id FROM payg_sessions ps
+                JOIN Server s ON ps.server_id = s.id
+                WHERE ps.account_username = ? AND s.domain = ? AND ps.protocol = ? AND ps.is_active = 1;
+            `;
+            db.all(query, [username, serverDomain, protocol, username, serverDomain, protocol], (err, rows) => {
+                if (err) {
+                    console.error("Error checking username availability by domain in DB:", err.message);
+                    reject(new Error("Gagal memeriksa ketersediaan username di database."));
+                } else {
+                    resolve(rows.length === 0); // true jika tersedia, false jika tidak tersedia
+                }
+            });
+        } catch (error) {
+            reject(error); // Tangani error dari pengambilan domain server
+        }
+    });
+}
+
+
+
 // Tambahkan blok ini setelah: const db = new sqlite3.Database(...)
 
 // ===================================================================
@@ -477,114 +518,86 @@ async function checkUserMembershipInAllGroups(ctx, userId) {
 }
 
 async function displayTutorialDashboard(ctx) {
-  const userId = ctx.from.id;
+    const userId = ctx.from.id;
 
-  // Hapus pesan "harap bergabung" atau pesan sebelumnya dari bot untuk user ini
-  if (userMessages[userId]) {
-      try {
-          await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]);
-          delete userMessages[userId];
-      } catch (e) { /* abaikan jika gagal, mungkin pesan sudah tidak ada */ }
-  }
-  // Jika ini dipanggil dari callback query, coba hapus pesan callback query itu sendiri
-  if (ctx.callbackQuery && (!userMessages[userId] || (userMessages[userId] && ctx.callbackQuery.message.message_id !== userMessages[userId]))) {
-      try { await ctx.deleteMessage(); } catch(e) { /* abaikan */ }
-  }
+    // Logika untuk membersihkan pesan lama tetap sama
+    if (ctx.callbackQuery) {
+        // Jika ini dari callback "kembali", tidak perlu hapus pesan, cukup edit
+    } else {
+        if (userMessages[userId]) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); delete userMessages[userId]; } catch (e) {}
+        }
+        try { await ctx.deleteMessage(); } catch(e) {}
+    }
 
-  const rawUsername = ctx.from.username || ctx.from.first_name || `Pengguna`;
-  const username = ctx.from.username
-      ? `<a href="tg://user?id=${userId}">${ctx.from.username}</a>`
-      : `<a href="tg://user?id=${userId}">${rawUsername}</a>`;
+    const rawUsername = ctx.from.username || ctx.from.first_name || `Pengguna`;
+    const username = `<a href="tg://user?id=${userId}">${escapeHtml(rawUsername)}</a>`;
 
-  db.serialize(() => {
-      db.run(
-          'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
-          [userId, username],
-          (err) => {
-              if (err) console.error('Kesalahan saat menyimpan user (tutorial display):', err.message);
-          }
-      );
-      db.run(
-          `UPDATE users SET username = ? WHERE user_id = ? AND (username IS NULL OR username != ?)`,
-          [username, userId, username],
-          (err) => {
-              if (err) console.error('Kesalahan saat mengupdate username (tutorial display):', err.message);
-          }
-      );
-  });
+    db.serialize(() => {
+        db.run('INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)', [userId, username]);
+        db.run(`UPDATE users SET username = ? WHERE user_id = ? AND (username IS NULL OR username != ?)`, [username, userId, username]);
+    });
 
-  const minResellerUpgradeTopUp = await getMinResellerUpgradeTopUp(); // Ambil nilai dinamis
+    const minResellerUpgradeTopUp = await getMinResellerUpgradeTopUp();
 
-  const keyboardForTutorial = [
-      [
-        { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
-        { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' }
-      ],
-      [
-          { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
-          { text: 'CARA TRIAL', url: 'https://t.me/internetgratisin/24' }
-      ],
-      [
-          { text: 'CARA RENEW', url: 'https://t.me/internetgratisin/132' },
-          { text: 'CARA DELETE', url: 'https://t.me/internetgratisin/13' }
-      ],
-      [
-          { text: 'GRUP WHATSAPP', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' }
-      ],
-      [{ text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }]
-  ];
-
-  const messageTextForTutorial = `
-<code><b>═══════════════════════════════</b></code>
-                  ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
-<code><b>═══════════════════════════════</b></code>
-         <b>⟨ DASHBOARD TUTORIAL ⟩</b>
+    // Teks pesan tetap sama
+    const messageTextForTutorial = `
+<code><b>═════════════════════════════════</b></code>
+                 ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
+<code><b>═════════════════════════════════</b></code>
+                     <b>⟨ DASHBOARD AWAL ⟩</b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
   <b><code>Selamat Datang</code></b> <i>${username}</i>
   <b><code>ID Anda:</code></b> <code>${userId}</code>
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b><code>Jika sudah paham, bisa langsung
-    ke Main Menu</code></b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 <b><code>Jika ingin menjadi reseller:</code></b>
 <b><code>Minimal Topup:</code></b><b><code>Rp ${minResellerUpgradeTopUp.toLocaleString('id-ID')}</code></b>
 <b><code>Diskon 50% dari harga normal!</code></b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b><code>SGDO</code></b> 🇸🇬: <b><code>134/Hari</code></b> <b><code>reseller</code></b>
-<b><code>SGDO</code></b> 🇸🇬: <b><code>267/Hari</code></b> <b><code>member</code></b>
-<b><code>INDO</code></b>  🇮🇩: <b><code>200/Hari</code></b> <b><code>reseller</code></b>
-<b><code>INDO</code></b>  🇮🇩: <b><code>334/Hari</code></b> <b><code>member</code></b>
+<b><code>Fitur Baru, Pay As You Go</code></b>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>Jika Sudah Paham Lanjut Ke Main Menu</b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 📞 <b><code>KESULITAN?</code></b>
 👤 <b><code>Chat Owner:</code></b> <a href="tg://user?id=7251232303">RyyStore</a>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b>Silakan pilih opsi layanan:</b>
+Silakan pilih opsi di bawah:
 `;
 
-  try {
-      const sentMessage = await ctx.replyWithHTML(messageTextForTutorial, {
-          reply_markup: {
-              inline_keyboard: keyboardForTutorial
-          },
-          disable_web_page_preview: true
-      });
-      userMessages[userId] = sentMessage.message_id;
-  } catch (error) {
-      console.error('Error saat mengirim pesan panduan (displayTutorialDashboard):', error);
-      try {
-          const fallbackMsg = await ctx.reply(`Selamat datang! ID Anda: ${userId}\nSilakan gunakan tombol di bawah atau ketik /menu untuk melanjutkan.`, {
-              reply_markup: {
-                  inline_keyboard: [[{ text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }]]
-              }
-          });
-          userMessages[userId] = fallbackMsg.message_id;
-      } catch (fallbackError) {
-          console.error('Error mengirim pesan fallback panduan (displayTutorialDashboard):', fallbackError);
-      }
-  }
-}
+    // --- KEYBOARD BARU YANG LEBIH SIMPLE ---
+    const simplifiedKeyboard = [
+        [
+          { text: 'Panduan & Tutorial Bot', callback_data: 'tutorial_menu_show' },
+          { text: 'Gabung Grup WhatsApp', url: 'https://chat.whatsapp.com/J8xxgw6eVJ23wY5JbluDfJ' }
+        ],
+        [{ text: 'Lanjut ke Menu Utama', callback_data: 'main_menu_refresh' }]
+    ];
+    
+    const messageOptions = {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: simplifiedKeyboard },
+        disable_web_page_preview: true
+    };
 
+    try {
+        let sentMessage;
+        if (ctx.callbackQuery) {
+            // Jika dipanggil dari tombol "Kembali", edit pesan yang ada
+            sentMessage = await ctx.editMessageText(messageTextForTutorial, messageOptions);
+        } else {
+            // Jika panggilan awal, kirim pesan baru
+            sentMessage = await ctx.replyWithHTML(messageTextForTutorial, messageOptions);
+        }
+        userMessages[userId] = sentMessage.message_id || (sentMessage.result && sentMessage.result.message_id) || ctx.callbackQuery.message.message_id;
+    } catch (error) {
+        console.error('Error di displayTutorialDashboard:', error);
+        // Fallback jika terjadi error
+        await ctx.reply(`Selamat datang! Terjadi sedikit masalah saat menampilkan menu. Silakan coba /menu`, {
+             reply_markup: { inline_keyboard: [[{ text: 'MAIN MENU', callback_data: 'main_menu_refresh' }]] }
+        });
+    }
+}
 // TAMBAHKAN FUNGSI BARU INI
 async function sendAdminStats(ctx) {
     try {
@@ -1629,6 +1642,51 @@ bot.command('admin', async (ctx) => {
   }
 
   await sendAdminMenu(ctx);
+});
+
+// Handler untuk menampilkan menu tutorial yang detail
+bot.action('tutorial_menu_show', async (ctx) => {
+    await ctx.answerCbQuery();
+
+    const messageText = "Berikut adalah panduan lengkap penggunaan bot:";
+
+    // --- KEYBOARD DIPERBARUI DENGAN TOMBOL BARU ---
+    const detailedKeyboard = [
+        [
+            { text: 'TOPUP', url: 'https://t.me/internetgratisin/21' },
+            { text: 'GENERATE BUG', url: 'https://t.me/internetgratisin/22' }
+        ],
+        [
+            { text: 'ORDER (Langganan)', url: 'https://t.me/internetgratisin/23' },
+            // ==> TOMBOL BARU DITAMBAHKAN DI SINI <==
+            { text: 'ORDER (PAYG)', url: 'https://t.me/internetgratisin/139' }
+        ],
+        [
+            { text: 'TRIAL', url: 'https://t.me/internetgratisin/24' },
+            { text: 'RENEW', url: 'https://t.me/internetgratisin/132' }
+        ],
+        [
+            { text: 'DELETE', url: 'https://t.me/internetgratisin/13' }
+        ],
+        [{ text: '🔙 Kembali', callback_data: 'tutorial_menu_hide' }]
+    ];
+
+    try {
+        // Edit pesan yang ada untuk menampilkan keyboard baru
+        await ctx.editMessageText(messageText, {
+            reply_markup: {
+                inline_keyboard: detailedKeyboard
+            },
+            disable_web_page_preview: true // Ditambahkan agar tidak menampilkan preview link
+        });
+    } catch (error) {
+        console.error('Gagal menampilkan menu tutorial detail:', error);
+    }
+});
+
+bot.action('tutorial_menu_hide', async (ctx) => {
+    await ctx.answerCbQuery();
+    await displayTutorialDashboard(ctx);
 });
 
 bot.action('force_join_check', async (ctx) => {
@@ -5846,10 +5904,12 @@ function calculateBonusAmount(originalTopupAmount, bonusConfig) {
     return Math.floor(calculatedBonus); // Kembalikan nilai integer
 }
 
+
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
-    const state = userState[userId]; 
+    const state = userState[userId];
 
+    // Jika tidak ada state atau step, abaikan pesan teks (bukan bagian dari alur input yang diharapkan)
     if (!state || !state.step) {
         return;
     }
@@ -5862,40 +5922,44 @@ bot.on('text', async (ctx) => {
         let userTypedAmountMessageId = ctx.message.message_id;
         let botPromptMessageId = userState[userId] ? userState[userId].lastBotMessageId : null;
 
+        // Hapus pesan-pesan terkait input top-up agar tampilan lebih bersih
         if (botPromptMessageId) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, botPromptMessageId); } catch (e) { /* Abaikan error */ }
         }
         if (userTypedAmountMessageId) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, userTypedAmountMessageId); } catch (e) { /* Abaikan error */ }
         }
-        if (userState[userId]) userState[userId].lastBotMessageId = null; 
+        if (userState[userId]) userState[userId].lastBotMessageId = null;
 
+        // Validasi input nominal top-up
         if (!/^\d+$/.test(amountText)) {
-            delete userState[userId];
+            delete userState[userId]; // Bersihkan state jika input tidak valid
             await ctx.reply('⚠️ Jumlah top-up tidak valid. Hanya masukkan angka.\nSilakan ulangi dari menu /menu.');
-            return sendMainMenu(ctx);
+            return sendMainMenu(ctx); // Kembali ke menu utama
         }
 
         const amount = parseInt(amountText, 10);
-        const minGeneralTopUp = await getMinGeneralTopUp(); 
+        const minGeneralTopUp = await getMinGeneralTopUp(); // Dapatkan minimal top-up dari DB
 
-        if (amount < minGeneralTopUp) { 
+        if (amount < minGeneralTopUp) {
             delete userState[userId];
             await ctx.reply(`⚠️ Jumlah top-up minimal adalah Rp${minGeneralTopUp.toLocaleString('id-ID')}.\nSilakan ulangi dari menu /menu.`);
             return sendMainMenu(ctx);
         }
-        if (amount > 5000000) { 
+        if (amount > 5000000) {
             delete userState[userId];
             await ctx.reply('⚠️ Jumlah top-up maksimal adalah Rp5.000.000.\nSilakan ulangi dari menu /menu.');
             return sendMainMenu(ctx);
         }
 
+        // Tambahkan suffix unik untuk PayDisini
         const minRandom = 10;
         const maxRandom = 999;
         const randomSuffix = Math.floor(Math.random() * (maxRandom - minRandom + 1) + minRandom);
         const uniqueAmount = amount + randomSuffix;
         const usernameForDisplay = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || `User${userId}`);
 
+        // Buat caption QRIS
         const qrisCaption = `
 <b>TOP UP SALDO - SCAN QRIS</b>
 ──────────────────────
@@ -5916,13 +5980,16 @@ Silakan scan QRIS untuk top up.`;
         try {
             loadingQrisMsg = await ctx.reply('⏳ Sedang membuat kode QRIS, mohon tunggu...');
 
-            const base64Qris = await generateDynamicQris(uniqueAmount, QRIS_STATIS_STRING); 
+            // Panggil API untuk generate QRIS dinamis
+            const base64Qris = await generateDynamicQris(uniqueAmount, QRIS_STATIS_STRING);
             const qrisBuffer = Buffer.from(base64Qris, 'base64');
 
+            // Hapus pesan loading QRIS
             if (loadingQrisMsg) {
                 try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) { /* abaikan */}
             }
 
+            // Kirim gambar QRIS ke pengguna
             const qrisPhotoMessage = await ctx.replyWithPhoto(
                 { source: qrisBuffer },
                 {
@@ -5936,18 +6003,20 @@ Silakan scan QRIS untuk top up.`;
                 }
             );
 
+            // Simpan state untuk proses top-up di queue
             userState[userId] = {
                 step: 'topup_waiting_payment',
                 uniqueAmount: uniqueAmount,
-                baseAmount: amount, 
+                baseAmount: amount,
                 qrisMessageId: qrisPhotoMessage.message_id,
-                timeout: Date.now() + (4 * 60 * 1000) 
+                timeout: Date.now() + (4 * 60 * 1000) // Batas waktu 4 menit
             };
 
+            // Tambahkan job ke queue untuk cek mutasi
             await topUpQueue.add({
                 userId,
-                amount: amount, 
-                uniqueAmount: uniqueAmount, 
+                amount: amount,
+                uniqueAmount: uniqueAmount,
                 qrisMessageId: qrisPhotoMessage.message_id
             });
 
@@ -5957,25 +6026,16 @@ Silakan scan QRIS untuk top up.`;
                 try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) { /* abaikan */}
             }
             await ctx.reply(`🚫 Terjadi kesalahan saat memproses permintaan top-up: ${error.message}.\nMohon coba lagi atau hubungi admin.`);
-            delete userState[userId];
-            return sendMainMenu(ctx);
+            delete userState[userId]; // Bersihkan state jika ada error
+            return sendMainMenu(ctx); // Kembali ke menu utama
         }
     }
-    
+
     // ==========================================================
     // ALUR 2: PEMBUATAN AKUN BERLANGGANAN (FIXED-TERM)
     // ==========================================================
     else if (state.step && state.step.startsWith('username_create_')) {
-        if (!state.action || state.action !== 'create' || !state.type || !state.serverId) {
-            console.error("State tidak lengkap atau salah untuk input username (create flow):", state);
-            delete userState[userId];
-            await ctx.reply("⚠️ Terjadi kesalahan sesi. Silakan ulangi dari awal.", { parse_mode: 'Markdown' });
-            return sendMainMenu(ctx);
-        }
-        const enteredUsername = ctx.message.text.trim();
-        const currentProtocol = state.type;
-        const currentServerId = state.serverId;
-
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e) {/* abaikan */}
         const botUsernamePromptId = userState[userId]?.lastBotMessageId;
         if (botUsernamePromptId) {
@@ -5983,44 +6043,35 @@ Silakan scan QRIS untuk top up.`;
             if (userState[userId]) userState[userId].lastBotMessageId = null;
         }
 
-        if (enteredUsername.length < 3 || enteredUsername.length > 20 || /[^a-zA-Z0-9]/.test(enteredUsername)) {
+        const enteredUsername = ctx.message.text.trim();
+        const currentProtocol = state.type;
+        const currentServerId = state.serverId;
+
+        // Validasi format username (panjang dan karakter yang diizinkan)
+        if (enteredUsername.length < 3 || enteredUsername.length > 20 || !/^[a-zA-Z0-9]+$/.test(enteredUsername)) {
             const newPrompt = await ctx.reply('🚫 *Username tidak valid (3-20 karakter, hanya huruf dan angka, tanpa spasi).* Silakan masukkan username lagi:', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-            return;
+            return; // Penting: hentikan eksekusi jika validasi gagal
         }
 
         try {
-            const existingActiveAccount = await new Promise((resolve, reject) => {
-                db.get(`SELECT id FROM created_accounts 
-                        WHERE account_username = ? 
-                          AND server_id = ? 
-                          AND protocol = ? 
-                          AND expiry_date > datetime('now', 'localtime') 
-                          AND is_active = 1`, 
-                       [enteredUsername, currentServerId, currentProtocol], 
-                       (err, row) => {
-                    if (err) {
-                        console.error("Error cek username di DB:", err.message);
-                        reject(new Error("Gagal memeriksa username di database."));
-                    } else {
-                        resolve(row);
-                    }
-                });
-            });
+            // Panggil fungsi helper universal untuk memeriksa ketersediaan username
+            const available = await isUsernameAvailable(enteredUsername, currentServerId, currentProtocol);
 
-            if (existingActiveAccount) {
-                const newPrompt = await ctx.reply(`⚠️ Username '<code>${escapeHtml(enteredUsername)}</code>' sudah terdaftar dan masih aktif untuk layanan <b>${currentProtocol.toUpperCase()}</b> di server ini.👤Silakan pilih username lain:`, { parse_mode: 'HTML' });
+            if (!available) { // Jika username TIDAK tersedia (sudah dipakai oleh akun berlangganan atau PAYG)
+                const newPrompt = await ctx.reply(`⚠️ Username '<code>${escapeHtml(enteredUsername)}</code>' sudah terdaftar dan masih aktif untuk layanan <b>${currentProtocol.toUpperCase()}</b> di server ini (baik berlangganan atau PAYG). Silakan pilih username lain:`, { parse_mode: 'HTML' });
                 if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-                return; 
+                return; // Penting: hentikan eksekusi
             }
         } catch (dbCheckError) {
-            console.error("Kesalahan saat validasi username:", dbCheckError);
+            console.error("Kesalahan saat validasi username (create flow):", dbCheckError.message);
             const newPrompt = await ctx.reply('⚠️ Terjadi kesalahan saat memeriksa ketersediaan username. Coba lagi atau hubungi admin jika masalah berlanjut.\nSilakan masukkan username lagi:', { parse_mode: 'Markdown'});
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-            return;
+            return; // Penting: hentikan eksekusi
         }
-        
-        state.username = enteredUsername; 
+
+        // Jika username valid dan tersedia, lanjutkan ke langkah berikutnya
+        state.username = enteredUsername;
         let nextPromptMessage;
         if (state.type === 'ssh') {
             state.step = `password_create_${state.type}`;
@@ -6031,7 +6082,13 @@ Silakan scan QRIS untuk top up.`;
         }
         if (userState[userId]) userState[userId].lastBotMessageId = nextPromptMessage.message_id;
 
-    } else if (state.step && state.step.startsWith('password_create_')) {
+    }
+
+    // ==========================================================
+    // ALUR 3: INPUT PASSWORD UNTUK SSH (SAAT PEMBUATAN AKUN BERLANGGANAN)
+    // ==========================================================
+    else if (state.step && state.step.startsWith('password_create_')) {
+        // Validasi bahwa ini memang alur pembuatan akun SSH dan state sebelumnya lengkap
         if (!state.action || state.action !== 'create' || state.type !== 'ssh' || !state.serverId || !state.username) {
             console.error("State tidak lengkap atau salah untuk input password (create flow):", state);
             delete userState[userId];
@@ -6040,6 +6097,7 @@ Silakan scan QRIS untuk top up.`;
         }
         const enteredPassword = ctx.message.text.trim();
 
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e) {}
         const botPasswordPromptId = userState[userId]?.lastBotMessageId;
         if (botPasswordPromptId) {
@@ -6047,17 +6105,24 @@ Silakan scan QRIS untuk top up.`;
             if (userState[userId]) userState[userId].lastBotMessageId = null;
         }
 
-        if (enteredPassword.length < 6 || /[^a-zA-Z0-9]/.test(enteredPassword)) {
+        // Validasi format password
+        if (enteredPassword.length < 6 || !/^[a-zA-Z0-9]+$/.test(enteredPassword)) {
             const newPrompt = await ctx.reply('🚫 *Password tidak valid (minimal 6 karakter, hanya huruf dan angka, tanpa spasi).* Silakan masukkan password lagi:', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
             return;
         }
         state.password = enteredPassword;
-        state.step = `exp_create_${state.type}`;
+        state.step = `exp_create_${state.type}`; // Lanjut ke input masa aktif
         const nextPromptMessage = await ctx.reply('⏳ *Masukkan masa aktif (dalam hari, contoh: 1, 7, 30):*', { parse_mode: 'Markdown' });
         if (userState[userId]) userState[userId].lastBotMessageId = nextPromptMessage.message_id;
 
-    } else if (state.step && state.step.startsWith('exp_create_')) {
+    }
+
+    // ==========================================================
+    // ALUR 4: INPUT MASA AKTIF (UNTUK PEMBUATAN AKUN BERLANGGANAN)
+    // ==========================================================
+    else if (state.step && state.step.startsWith('exp_create_')) {
+        // Validasi bahwa ini memang alur pembuatan akun dan state sebelumnya lengkap
         if (!state.action || state.action !== 'create' || !state.type || !state.serverId || !state.username) {
             console.error("State tidak lengkap atau salah untuk input masa aktif (create flow):", state);
             delete userState[userId];
@@ -6066,6 +6131,7 @@ Silakan scan QRIS untuk top up.`;
         }
         const expInput = ctx.message.text.trim();
 
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
         const botExpPromptId = userState[userId]?.lastBotMessageId;
         if (botExpPromptId) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, botExpPromptId); } catch(e) {}
@@ -6073,6 +6139,7 @@ Silakan scan QRIS untuk top up.`;
         }
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e) {}
 
+        // Validasi input masa aktif
         if (!/^\d+$/.test(expInput) || parseInt(expInput, 10) <= 0 || parseInt(expInput, 10) > 365) {
             const newPrompt = await ctx.reply('🚫 *Masa aktif tidak valid (1-365 hari).* Silakan masukkan masa aktif lagi:', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
@@ -6085,7 +6152,8 @@ Silakan scan QRIS untuk top up.`;
 
         try {
             loadingMessage = await ctx.reply('⏳ Memvalidasi permintaan Anda...');
-            
+
+            // Ambil detail server dari DB
             const serverDetails = await new Promise((resolve, reject) => {
                 db.get('SELECT quota, iplimit, harga, harga_reseller, nama_server, batas_create_akun, total_create_akun FROM Server WHERE id = ?', [serverId], (err, row) => {
                     if (err) reject(new Error("Gagal mengambil detail server dari database."));
@@ -6094,27 +6162,33 @@ Silakan scan QRIS untuk top up.`;
                 });
             });
 
+            // Cek apakah server penuh
             if (serverDetails.total_create_akun >= serverDetails.batas_create_akun) {
                 throw new Error(`Server ${serverDetails.nama_server} sudah penuh (Slot: ${serverDetails.total_create_akun}/${serverDetails.batas_create_akun}). Saldo Anda tidak dipotong.`);
             }
 
-            const userRole = await getUserRole(userId); 
+            // Ambil role dan hitung harga
+            const userRole = await getUserRole(userId);
             const hargaPerHari = userRole === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
-            const totalHarga = calculatePrice(hargaPerHari, exp); 
+            const totalHarga = calculatePrice(hargaPerHari, exp);
 
-            const userDbInfo = await new Promise((resolve, reject) => { 
+            // Ambil saldo pengguna dari DB
+            const userDbInfo = await new Promise((resolve, reject) => {
                 db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
                     if (err) reject(new Error("Gagal mengambil informasi saldo Anda."));
                     else if (!row) reject(new Error("Data pengguna tidak ditemukan."));
                     else resolve(row);
                 });
             });
-            
+
+            // Cek saldo
             if (userDbInfo.saldo < totalHarga) {
                 throw new Error(`Saldo Anda (Rp${userDbInfo.saldo.toLocaleString('id-ID')}) tidak mencukupi. Harga layanan adalah Rp${totalHarga.toLocaleString('id-ID')}. Saldo Anda tidak dipotong.`);
             }
 
             await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, `⏳ Menghubungi server untuk membuat akun ${type.toUpperCase()}...`);
+
+            // Panggil fungsi create akun di panel (createssh, createvmess, dll.)
             let panelCreationResponse;
             const createFunctions = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan };
 
@@ -6124,13 +6198,14 @@ Silakan scan QRIS untuk top up.`;
 
             try {
                 panelCreationResponse = (type === 'ssh')
-                    ? await createFunctions[type](username, password, exp, serverDetails.iplimit, serverId) 
+                    ? await createFunctions[type](username, password, exp, serverDetails.iplimit, serverId)
                     : await createFunctions[type](username, exp, serverDetails.quota, serverDetails.iplimit, serverId);
 
+                // Periksa respons dari panel
                 if (typeof panelCreationResponse === 'string' && (panelCreationResponse.toLowerCase().includes("gagal") || panelCreationResponse.toLowerCase().includes("error") || panelCreationResponse.toLowerCase().includes("sudah ada"))) {
-                    throw new Error(`Panel: ${panelCreationResponse}`); 
+                    throw new Error(`Panel: ${panelCreationResponse}`);
                 }
-                if (!panelCreationResponse) { 
+                if (!panelCreationResponse) {
                     throw new Error("Panel tidak memberikan respon yang valid setelah pembuatan akun.");
                 }
             } catch (panelError) {
@@ -6140,6 +6215,7 @@ Silakan scan QRIS untuk top up.`;
 
             await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, '⏳ Akun berhasil dibuat di panel. Memproses transaksi & mencatat akun...');
 
+            // Potong saldo di DB
             await new Promise((resolve, reject) => {
                 db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, userId], function(err) {
                     if (err) {
@@ -6155,25 +6231,26 @@ Silakan scan QRIS untuk top up.`;
                     }
                 });
             });
-            
-            await recordUserTransaction(userId); 
-            await new Promise((resolve, reject) => { 
+
+            await recordUserTransaction(userId); // Catat transaksi pengguna
+            await new Promise((resolve, reject) => {
                 db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
                     if (err) {
                         console.error('PERHATIAN: Gagal update total_create_akun server setelah sukses panel:', err.message, {serverId, username, type});
                         bot.telegram.sendMessage(ADMIN, `🟡 PERHATIAN: Akun ${username} (${type}) di server ${serverDetails.nama_server} berhasil dibuat & saldo dipotong, TAPI GAGAL update counter slot server. Server ID: ${serverId}. Harap periksa manual.`).catch(e => console.error("Gagal kirim notif perhatian ke admin:", e));
                     }
-                    resolve();
+                    resolve(); // Lanjutkan meskipun ada error ini karena ini bukan error fatal
                 });
             });
-            await updateUserAccountCreation(userId); 
-            
+            await updateUserAccountCreation(userId); // Update statistik pembuatan akun user
+
+            // Hitung tanggal kadaluarsa dan simpan di DB
             const expiryDate = new Date();
             expiryDate.setDate(expiryDate.getDate() + exp);
-            expiryDate.setHours(23, 59, 59, 999);
+            expiryDate.setHours(23, 59, 59, 999); // Set ke akhir hari agar tidak expired di awal hari
 
             const creationTimestamp = new Date().toISOString();
-            const accountDurationDays = exp; 
+            const accountDurationDays = exp;
 
             await new Promise((resolve, reject) => {
                 db.run(
@@ -6183,7 +6260,7 @@ Silakan scan QRIS untuk top up.`;
                         if (err) {
                             console.error(`PERHATIAN: Gagal mencatat akun ${username} (${type}) ke created_accounts: ${err.message}`);
                             bot.telegram.sendMessage(ADMIN, `🟡 PERHATIAN: Akun ${username} (${type}) di server ${serverDetails?.nama_server || serverId} berhasil dibuat & saldo dipotong, TAPI GAGAL dicatat di 'created_accounts'. User ID: ${userId}, Server ID: ${serverId}. Harap periksa manual.`).catch(e => console.error("Gagal kirim notif perhatian ke admin:", e));
-                            reject(err); 
+                            reject(err);
                         } else {
                             console.log(`Akun ${username} (${type}) berhasil dicatat ke created_accounts. Durasi: ${accountDurationDays} hari, Dibuat: ${creationTimestamp}, Exp: ${expiryDate.toISOString()}`);
                             resolve();
@@ -6191,105 +6268,145 @@ Silakan scan QRIS untuk top up.`;
                     }
                 );
             });
-            
-            try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id); } catch(e) {} 
 
-            await sendGroupNotificationPurchase(ctx.from.username || `User ${userId}`, userId, type, serverDetails.nama_server, exp); 
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id); } catch(e) {} // Hapus pesan loading
+
+            // Kirim notifikasi ke grup
+            await sendGroupNotificationPurchase(ctx.from.username || `User ${userId}`, userId, type, serverDetails.nama_server, exp);
+            // Kirim detail akun ke pengguna
             await ctx.reply(panelCreationResponse, { parse_mode: 'Markdown' });
 
-        } catch (error) { 
+        } catch (error) {
             console.error('Error saat proses pembuatan akun (langkah exp_create_):', error.message, error.stack);
             let finalErrorMessage = `🚫 Gagal memproses pembuatan akun: ${error.message || 'Detail error tidak tersedia.'}`;
 
-            if (error.message.includes("Saldo Anda tidak dipotong") || 
+            // Perbaiki pesan error agar lebih informatif
+            if (error.message.includes("Saldo Anda tidak dipotong") ||
                 error.message.includes("Saldo Anda TIDAK dipotong") ||
                 (error.message.includes("Saldo Anda (Rp") && error.message.includes("tidak mencukupi")) ||
                 (error.message.includes("Server") && error.message.includes("sudah penuh")) ||
                 error.message.includes("Panel tidak memberikan respon")
             ) {
-                finalErrorMessage = `🚫 ${error.message}`; 
-            } 
+                finalErrorMessage = `🚫 ${error.message}`;
+            }
             else if (error.message.includes("Gagal memotong saldo") || error.message.includes("Gagal mencatat pemotongan saldo")) {
                 finalErrorMessage = `🚫 ${error.message}\nAkun kemungkinan telah terbuat di server. Harap segera laporkan ke Admin dengan menyertakan:\nUsername: <code>${escapeHtml(username)}</code>\nServer: <code>${escapeHtml(serverDetails?.nama_server || serverId)}</code>\nProtokol: <code>${type.toUpperCase()}</code>`;
             } else {
                 finalErrorMessage = `🚫 Gagal membuat akun. Penyebab: ${error.message || 'Tidak ada detail.'}\nSaldo Anda kemungkinan besar TIDAK terpotong. Hubungi admin jika ragu.`;
             }
 
-            if (loadingMessage && loadingMessage.message_id) { 
+            // Kirim pesan error ke pengguna
+            if (loadingMessage && loadingMessage.message_id) {
                 try {
                     await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, finalErrorMessage, {parse_mode: 'HTML'});
                 } catch (editError) {
                     await ctx.reply(finalErrorMessage, { parse_mode: 'HTML' });
                 }
-            } else { 
+            } else {
                 await ctx.reply(finalErrorMessage, { parse_mode: 'HTML' });
             }
-        } finally { 
-            delete userState[userId]; 
-            await sendMainMenu(ctx); 
+        } finally {
+            delete userState[userId]; // Bersihkan state setelah alur selesai (berhasil/gagal)
+            await sendMainMenu(ctx); // Kembali ke menu utama
         }
     }
-    
+
     // ==========================================================
-    // ALUR 3: PEMBUATAN AKUN PAY-AS-YOU-GO (BARU)
+    // ALUR 5: INPUT USERNAME UNTUK PEMBUATAN AKUN PAY-AS-YOU-GO (BARU)
     // ==========================================================
     else if (state.step && state.step.startsWith('username_payg_')) {
+        // Validasi state sebelum melanjutkan
         if (!state.action || state.action !== 'payg' || !state.type || !state.serverId) {
-            delete userState[userId]; 
+            delete userState[userId];
             console.error("State PAYG tidak lengkap untuk input username:", state);
-            return;
-        }
-        state.username = ctx.message.text.trim();
-        try { await ctx.deleteMessage(); } catch(e){}
-        if (userState[userId]?.lastBotMessageId) { 
-            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {} 
+            await ctx.reply("⚠️ Sesi tidak valid. Silakan ulangi dari awal.", { parse_mode: 'Markdown' });
+            return sendMainMenu(ctx);
         }
 
-        if (state.username.length < 3 || state.username.length > 20 || /[^a-zA-Z0-9]/.test(state.username)) {
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
+        try { await ctx.deleteMessage(); } catch(e) {}
+        if (userState[userId]?.lastBotMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {}
+            if (userState[userId]) userState[userId].lastBotMessageId = null;
+        }
+
+        const enteredUsername = ctx.message.text.trim(); // Gunakan variabel yang konsisten
+        const currentProtocol = state.type;
+        const currentServerId = state.serverId;
+
+        // Validasi format username (panjang dan karakter yang diizinkan)
+        if (enteredUsername.length < 3 || enteredUsername.length > 20 || !/^[a-zA-Z0-9]+$/.test(enteredUsername)) {
             const newPrompt = await ctx.reply('🚫 *Username tidak valid (3-20 karakter, hanya huruf & angka).* Coba lagi:', { parse_mode: 'Markdown' });
             if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-            return;
+            return; // Penting: hentikan eksekusi
         }
 
-        const existingPayg = await new Promise((resolve) => db.get("SELECT id FROM payg_sessions WHERE account_username = ? AND server_id = ? AND protocol = ? AND is_active = 1", [state.username, state.serverId, state.type], (_,r)=>resolve(r)));
-        if(existingPayg) {
-            const newPrompt = await ctx.reply(`⚠️ Username '<code>${escapeHtml(state.username)}</code>' sudah digunakan di layanan PAYG server ini. Coba username lain:`, {parse_mode: 'HTML'});
-            if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-            return;
+        try {
+            // Panggil fungsi helper universal untuk memeriksa ketersediaan username
+            const available = await isUsernameAvailable(enteredUsername, currentServerId, currentProtocol);
+
+            if (!available) { // Jika username TIDAK tersedia (sudah dipakai oleh akun berlangganan atau PAYG)
+                const newPrompt = await ctx.reply(`⚠️ Username '<code>${escapeHtml(enteredUsername)}</code>' sudah digunakan di layanan <b>${currentProtocol.toUpperCase()}</b> server ini (baik berlangganan atau PAYG). Coba username lain:`, {parse_mode: 'HTML'});
+                if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+                return; // Penting: hentikan eksekusi
+            }
+        } catch (dbCheckError) {
+            console.error("Kesalahan saat validasi username (PAYG flow):", dbCheckError.message);
+            const newPrompt = await ctx.reply('⚠️ Terjadi kesalahan saat memeriksa ketersediaan username. Coba lagi atau hubungi admin jika masalah berlanjut.\nSilakan masukkan username lagi:', { parse_mode: 'Markdown'});
+            if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+            return; // Penting: hentikan eksekusi
         }
 
+        // Jika username valid dan tersedia, simpan ke state
+        state.username = enteredUsername;
+
+        // Jika protokol SSH, minta password. Jika tidak, langsung proses pembuatan akun PAYG.
         if (state.type === 'ssh') {
             state.step = `password_payg_${state.type}`;
             const nextPrompt = await ctx.reply('🔑 *Masukkan password (min 6 karakter, alfanumerik):*', { parse_mode: 'Markdown' });
             if(userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
         } else {
+            // Jika bukan SSH, langsung panggil fungsi untuk proses final PAYG creation
             await processFinalPaygCreation(ctx);
         }
-    } else if (state.step && state.step.startsWith('password_payg_')) {
+    }
+
+    // ==========================================================
+    // ALUR 6: INPUT PASSWORD UNTUK SSH (SAAT PEMBUATAN AKUN PAY-AS-YOU-GO)
+    // ==========================================================
+    else if (state.step && state.step.startsWith('password_payg_')) {
+        // Validasi bahwa ini memang alur pembuatan akun PAYG SSH dan state sebelumnya lengkap
         if (!state.action || state.action !== 'payg' || state.type !== 'ssh' || !state.serverId || !state.username) {
-            delete userState[userId]; 
+            delete userState[userId];
             console.error("State PAYG tidak lengkap untuk input password:", state);
-            return;
+            await ctx.reply("⚠️ Sesi tidak valid. Silakan ulangi dari awal.", { parse_mode: 'Markdown' });
+            return sendMainMenu(ctx);
         }
         state.password = ctx.message.text.trim();
-        try { await ctx.deleteMessage(); } catch(e){}
-        if (userState[userId]?.lastBotMessageId) { 
-            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {} 
+
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
+        try { await ctx.deleteMessage(); } catch(e) {}
+        if (userState[userId]?.lastBotMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {}
+            if (userState[userId]) userState[userId].lastBotMessageId = null;
         }
 
-        if (state.password.length < 6 || /[^a-zA-Z0-9]/.test(state.password)) {
+        // Validasi format password
+        if (state.password.length < 6 || !/^[a-zA-Z0-9]+$/.test(state.password)) {
             const newPrompt = await ctx.reply('🚫 *Password tidak valid (min 6 karakter, alfanumerik).* Coba lagi:', { parse_mode: 'Markdown' });
             if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
             return;
         }
-        
+
+        // Lanjutkan ke proses final pembuatan akun PAYG
         await processFinalPaygCreation(ctx);
     }
-    
+
     // ==========================================================
-    // ALUR 4: PERPANJANGAN AKUN (RENEW)
+    // ALUR 7: INPUT MASA AKTIF (UNTUK PERPANJANGAN AKUN RENEW)
     // ==========================================================
     else if (state.step && state.step.startsWith('exp_renew_')) {
+        // Validasi bahwa ini memang alur perpanjangan akun dan state sebelumnya lengkap
         if (!state.action || state.action !== 'renew' || !state.type || !state.serverId || !state.username) {
             console.error("State tidak lengkap untuk perpanjangan:", state);
             delete userState[userId];
@@ -6298,6 +6415,7 @@ Silakan scan QRIS untuk top up.`;
         }
 
         const expInput = ctx.message.text.trim();
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
         const botExpPromptId = userState[userId]?.lastBotMessageId;
         if (botExpPromptId) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, botExpPromptId); } catch (e) {}
@@ -6305,6 +6423,7 @@ Silakan scan QRIS untuk top up.`;
         }
         try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
 
+        // Validasi input masa aktif
         if (!/^\d+$/.test(expInput) || parseInt(expInput, 10) <= 0 || parseInt(expInput, 10) > 365) {
             const newPrompt = await ctx.reply('🚫 *Masa aktif tidak valid (1-365 hari).* Masukkan masa aktif lagi:', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
@@ -6319,6 +6438,7 @@ Silakan scan QRIS untuk top up.`;
         try {
             loadingMessage = await ctx.reply('⏳ Memproses permintaan perpanjangan...');
 
+            // Ambil detail server dari DB
             const serverDetails = await new Promise((resolve, reject) => {
                 db.get('SELECT harga, harga_reseller, nama_server, quota, iplimit FROM Server WHERE id = ?', [serverId], (err, row) => {
                     if (err) reject(new Error("Gagal mengambil detail server."));
@@ -6327,10 +6447,12 @@ Silakan scan QRIS untuk top up.`;
                 });
             });
 
+            // Ambil role dan hitung harga perpanjangan
             const userRole = await getUserRole(userId);
             const hargaPerHari = userRole === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
             const totalHarga = calculatePrice(hargaPerHari, exp);
 
+            // Ambil saldo pengguna dari DB
             const userDbInfo = await new Promise((resolve, reject) => {
                 db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
                     if (err) reject(new Error("Gagal mengambil saldo Anda."));
@@ -6339,21 +6461,25 @@ Silakan scan QRIS untuk top up.`;
                 });
             });
 
+            // Cek saldo
             if (userDbInfo.saldo < totalHarga) {
                 throw new Error(`Saldo Anda (Rp${userDbInfo.saldo.toLocaleString('id-ID')}) tidak cukup. Harga perpanjangan: Rp${totalHarga.toLocaleString('id-ID')}.`);
             }
 
+            // Panggil fungsi renew akun di panel
             const renewFunctions = { ssh: renewssh, vmess: renewvmess, vless: renewvless, trojan: renewtrojan };
             if (!renewFunctions[type]) throw new Error("Tipe layanan tidak valid untuk perpanjangan.");
 
             const panelRenewResponse = (type === 'ssh')
                 ? await renewFunctions[type](username, exp, serverDetails.iplimit, serverId)
                 : await renewFunctions[type](username, exp, serverDetails.quota, serverDetails.iplimit, serverId);
-            
+
+            // Periksa respons dari panel
             if (typeof panelRenewResponse === 'string' && panelRenewResponse.startsWith('❌')) {
                 throw new Error(panelRenewResponse);
             }
 
+            // Potong saldo di DB
             await new Promise((resolve, reject) => {
                 db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, userId], (err) => {
                     if (err) reject(new Error("KRITIS: Gagal potong saldo setelah perpanjangan sukses. Hubungi admin!"));
@@ -6361,6 +6487,7 @@ Silakan scan QRIS untuk top up.`;
                 });
             });
 
+            // Update tanggal expired di tabel created_accounts
             const accountInfo = await new Promise((resolve, reject) => {
                 db.get("SELECT expiry_date FROM created_accounts WHERE server_id = ? AND account_username = ? AND protocol = ?", [serverId, username, type], (err, row) => {
                     if (err || !row) reject(new Error("Gagal menemukan akun di DB untuk update expiry."));
@@ -6370,18 +6497,19 @@ Silakan scan QRIS untuk top up.`;
 
             const currentExpiry = new Date(accountInfo.expiry_date);
             const now = new Date();
-            const startDate = currentExpiry > now ? currentExpiry : now;
+            // Jika tanggal expired sudah lewat, mulai perpanjangan dari sekarang. Jika belum, tambahkan dari tanggal expired yang ada.
+            const startDateForRenewal = currentExpiry > now ? currentExpiry : now;
 
-            const newExpiryDate = new Date(startDate);
-            newExpiryDate.setDate(startDate.getDate() + exp);
-            newExpiryDate.setHours(23, 59, 59, 999);
-            
+            const newExpiryDate = new Date(startDateForRenewal);
+            newExpiryDate.setDate(startDateForRenewal.getDate() + exp);
+            newExpiryDate.setHours(23, 59, 59, 999); // Set ke akhir hari
+
             await new Promise((resolve, reject) => {
                 const sql = `
-                    UPDATE created_accounts 
-                    SET expiry_date = ?, duration_days = duration_days + ?, is_active = 1 
+                    UPDATE created_accounts
+                    SET expiry_date = ?, duration_days = duration_days + ?, is_active = 1
                     WHERE server_id = ? AND account_username = ? AND protocol = ?`;
-                
+
                 const params = [newExpiryDate.toISOString(), exp, serverId, username, type];
 
                 db.run(sql, params, function(err) {
@@ -6396,49 +6524,49 @@ Silakan scan QRIS untuk top up.`;
                     }
                 });
             });
-            
-            await recordUserTransaction(userId);
 
-            try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id);
-            } catch(e) {}
-            
+            await recordUserTransaction(userId); // Catat transaksi perpanjangan
+
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id); } catch(e) {} // Hapus pesan loading
+
+            // Kirim detail akun yang diperpanjang ke pengguna
             await ctx.reply(panelRenewResponse, { parse_mode: 'Markdown' });
 
+            // Kirim notifikasi perpanjangan ke grup
             await sendRenewNotification(userId, userRole, type, serverDetails.nama_server, username, exp, totalHarga, newExpiryDate);
 
         } catch (error) {
             console.error('Error saat proses perpanjangan akun:', error.message, error.stack);
-            const errorMessage = `🚫 Gagal: ${error.message.replace('❌', '').trim()}`;
+            const errorMessage = `🚫 Gagal: ${error.message.replace('❌', '').trim()}`; // Bersihkan pesan error dari panel
             if (loadingMessage) {
-                try { await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, errorMessage); } 
-                catch (editError) { await ctx.reply(errorMessage); }
+                try { await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, errorMessage); }
+                catch (editError) { await ctx.reply(errorMessage); } // Fallback jika edit gagal
             } else {
                 await ctx.reply(errorMessage);
             }
         } finally {
-            delete userState[userId];
-            await sendMainMenu(ctx);
+            delete userState[userId]; // Bersihkan state setelah alur selesai
+            await sendMainMenu(ctx); // Kembali ke menu utama
         }
     }
-    
+
     // ==========================================================
-    // ALUR 5: ADMIN - TAMBAH SERVER & BUG
+    // ALUR 8: ADMIN - MENAMBAHKAN SERVER BARU (bertahap)
     // ==========================================================
-    else if (state.step === 'addserver_domain') { 
-        if (!adminIds.includes(String(userId))) { delete userState[userId]; return; } 
+    else if (state.step === 'addserver_domain') {
+        if (!adminIds.includes(String(userId))) { delete userState[userId]; return; } // Pastikan admin
+        // Hapus pesan user dan bot sebelumnya
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e){}
         const botPrompt = userState[userId]?.lastBotMessageId;
         if(botPrompt) { try { await ctx.telegram.deleteMessage(ctx.chat.id, botPrompt); } catch(e){} }
         if(userState[userId]) userState[userId].lastBotMessageId = null;
 
+        const newDomainInput = ctx.message.text.trim();
 
-        const newDomainInput = ctx.message.text.trim(); 
-
-        if (!newDomainInput) { 
-            const newPromptMsg = await ctx.reply('⚠️ *Domain tidak boleh kosong.* Masukkan domain server:', { parse_mode: 'Markdown' }); 
+        if (!newDomainInput) {
+            const newPromptMsg = await ctx.reply('⚠️ *Domain tidak boleh kosong.* Masukkan domain server:', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
-            return; 
+            return;
         }
         state.domain = newDomainInput; state.step = 'addserver_auth';
         const nextPrompt = await ctx.reply('🔑 *Masukkan auth server:*', { parse_mode: 'Markdown' });
@@ -6452,13 +6580,13 @@ Silakan scan QRIS untuk top up.`;
         if(userState[userId]) userState[userId].lastBotMessageId = null;
 
         const auth = ctx.message.text.trim();
-        if (!auth) { 
-            const newPromptMsg = await ctx.reply('⚠️ *Auth tidak boleh kosong.* Masukkan auth server.', { parse_mode: 'Markdown' }); 
+        if (!auth) {
+            const newPromptMsg = await ctx.reply('⚠️ *Auth tidak boleh kosong.* Masukkan auth server.', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
-            return; 
+            return;
         }
         state.auth = auth; state.step = 'addserver_nama_server';
-        const nextPrompt = await ctx.reply('🏷️ *Masukkan nama server (misal: SG Public):*', { parse_mode: 'Markdown' });
+        const nextPrompt = await ctx.reply('🏷️ *Masukkan nama server (misal: SG Premium):*', { parse_mode: 'Markdown' });
         if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
 
     } else if (state.step === 'addserver_nama_server') {
@@ -6469,10 +6597,10 @@ Silakan scan QRIS untuk top up.`;
         if(userState[userId]) userState[userId].lastBotMessageId = null;
 
         const nama_server = ctx.message.text.trim();
-        if (!nama_server) { 
-            const newPromptMsg = await ctx.reply('⚠️ *Nama server tidak boleh kosong.* Masukkan nama server.', { parse_mode: 'Markdown' }); 
+        if (!nama_server) {
+            const newPromptMsg = await ctx.reply('⚠️ *Nama server tidak boleh kosong.* Masukkan nama server.', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
-            return; 
+            return;
         }
         state.nama_server = nama_server; state.step = 'addserver_quota';
         const nextPrompt = await ctx.reply('📊 *Masukkan quota server (GB), contoh: 50*', { parse_mode: 'Markdown' });
@@ -6487,7 +6615,7 @@ Silakan scan QRIS untuk top up.`;
 
         const quotaInput = ctx.message.text.trim();
         if (!/^\d+$/.test(quotaInput) || parseInt(quotaInput, 10) <=0) {
-            const newPromptMsg = await ctx.reply('⚠️ *Quota tidak valid.* Masukkan angka positif (GB).', { parse_mode: 'Markdown' }); 
+            const newPromptMsg = await ctx.reply('⚠️ *Quota tidak valid.* Masukkan angka positif (GB).', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
             return;
         }
@@ -6504,7 +6632,7 @@ Silakan scan QRIS untuk top up.`;
 
         const iplimitInput = ctx.message.text.trim();
         if (!/^\d+$/.test(iplimitInput) || parseInt(iplimitInput, 10) <=0) {
-            const newPromptMsg = await ctx.reply('⚠️ *Limit IP tidak valid.* Masukkan angka positif.', { parse_mode: 'Markdown' }); 
+            const newPromptMsg = await ctx.reply('⚠️ *Limit IP tidak valid.* Masukkan angka positif.', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
             return;
         }
@@ -6521,7 +6649,7 @@ Silakan scan QRIS untuk top up.`;
 
         const batasCreateInput = ctx.message.text.trim();
         if (!/^\d+$/.test(batasCreateInput) || parseInt(batasCreateInput, 10) <=0) {
-            const newPromptMsg = await ctx.reply('⚠️ *Batas create akun tidak valid.* Masukkan angka positif.', { parse_mode: 'Markdown' }); 
+            const newPromptMsg = await ctx.reply('⚠️ *Batas create akun tidak valid.* Masukkan angka positif.', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
             return;
         }
@@ -6537,30 +6665,31 @@ Silakan scan QRIS untuk top up.`;
         if(userState[userId]) userState[userId].lastBotMessageId = null;
 
         const hargaInput = ctx.message.text.trim();
-        if (!/^\d+$/.test(hargaInput) || parseInt(hargaInput, 10) <=0) { 
-            const newPromptMsg = await ctx.reply('⚠️ *Harga tidak valid.* Masukkan angka integer positif.', { parse_mode: 'Markdown' }); 
+        if (!/^\d+$/.test(hargaInput) || parseInt(hargaInput, 10) <=0) {
+            const newPromptMsg = await ctx.reply('⚠️ *Harga tidak valid.* Masukkan angka integer positif.', { parse_mode: 'Markdown' });
             if (userState[userId]) userState[userId].lastBotMessageId = newPromptMsg.message_id;
             return;
         }
-        state.harga = parseInt(hargaInput); 
+        state.harga = parseInt(hargaInput);
         state.step = 'addserver_harga_reseller';
         const nextPrompt = await ctx.reply('💸 *Masukkan harga server per hari (untuk reseller), contoh: 150*', { parse_mode: 'Markdown' });
         if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
 
     } else if (state.step === 'addserver_harga_reseller') {
         if (!adminIds.includes(String(userId))) { delete userState[userId]; return; }
-        
-        const hargaResellerInput = ctx.message.text.trim(); 
+
+        const hargaResellerInput = ctx.message.text.trim();
+        // Hapus pesan user dan bot sebelumnya
         if (userState[userId]?.lastBotMessageId) { try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e){} }
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e){}
         if(userState[userId]) userState[userId].lastBotMessageId = null;
 
         if (!/^\d+$/.test(hargaResellerInput) || parseInt(hargaResellerInput, 10) <=0) {
-            await ctx.reply('⚠️ *Harga reseller tidak valid.* Masukkan angka integer positif.', { parse_mode: 'Markdown' }); 
-            delete userState[userId]; 
-            return sendAdminMenu(ctx);
+            await ctx.reply('⚠️ *Harga reseller tidak valid.* Masukkan angka integer positif.', { parse_mode: 'Markdown' });
+            delete userState[userId];
+            return sendAdminMenu(ctx); // Kembali ke menu admin jika input tidak valid
         }
-        state.harga_reseller = parseInt(hargaResellerInput); 
+        state.harga_reseller = parseInt(hargaResellerInput);
 
         const { domain, auth, nama_server, quota, iplimit, batas_create_akun, harga, harga_reseller } = state;
 
@@ -6579,11 +6708,15 @@ Silakan scan QRIS untuk top up.`;
                         `  - Batas Akun: ${batas_create_akun}\n` +
                         `  - Harga Member: Rp${harga}/hr, Reseller: Rp${harga_reseller}/hr`, { parse_mode: 'Markdown' });
                 }
-                delete userState[userId]; 
-                sendAdminMenu(ctx); 
+                delete userState[userId]; // Bersihkan state setelah selesai
+                sendAdminMenu(ctx); // Kembali ke menu admin
             }
         );
     }
+
+    // ==========================================================
+    // ALUR 9: ADMIN - MENAMBAHKAN BUG HOST (bertahap)
+    // ==========================================================
     else if (state.step === 'admin_addbug_code_input') {
         if (!adminIds.includes(String(userId))) { delete userState[userId]; return; }
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e){}
@@ -6592,18 +6725,21 @@ Silakan scan QRIS untuk top up.`;
         if (userState[userId]) userState[userId].lastBotMessageId = null;
 
         const bug_code = ctx.message.text.trim().toLowerCase();
-        
+
+        // Validasi format kode bug
         if (!bug_code || bug_code.includes(' ') || bug_code.length > 50 || !/^[a-z0-9_.-]+$/.test(bug_code)) {
             const nextPrompt = await ctx.reply('⚠️ Kode Bug tidak valid (maks 50 char, tanpa spasi, huruf kecil, angka, _.-). Ulangi:');
             if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
             return;
         }
+        // Cek duplikasi kode bug
         const existing = await new Promise((resolve) => db.get('SELECT id FROM Bugs WHERE bug_code = ?', [bug_code], (_,r) => resolve(r)));
         if (existing) {
-            const nextPrompt = await ctx.reply('⚠️ Kode Bug \`' + escapeHtml(bug_code) + '\` sudah ada. Masukkan kode unik lain:');
+            const nextPrompt = await ctx.reply('⚠️ Kode Bug `' + escapeHtml(bug_code) + '` sudah ada. Masukkan kode unik lain:');
             if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
             return;
         }
+
         state.bug_code = bug_code;
         state.step = 'admin_addbug_display_name_input';
         const nextPrompt = await ctx.reply('🏷️ Masukkan Nama Tampilan Bug (cth: XL Vidio Mantap [Quiz]):');
@@ -6617,6 +6753,7 @@ Silakan scan QRIS untuk top up.`;
         if (userState[userId]) userState[userId].lastBotMessageId = null;
 
         const display_name = ctx.message.text.trim();
+        // Validasi nama tampilan
         if (!display_name || display_name.length > 100 || display_name.length < 3) {
             const nextPrompt = await ctx.reply('⚠️ Nama Tampilan tidak valid (3-100 char). Ulangi:');
             if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
@@ -6633,8 +6770,10 @@ Silakan scan QRIS untuk top up.`;
         const botPrompt = userState[userId]?.lastBotMessageId;
         if(botPrompt) { try { await ctx.telegram.deleteMessage(ctx.chat.id, botPrompt); } catch(e){} }
         if (userState[userId]) userState[userId].lastBotMessageId = null;
+
         const bug_address = ctx.message.text.trim();
-         if (!bug_address || bug_address.length > 255 || bug_address.length < 3) { 
+        // Validasi alamat bug
+        if (!bug_address || bug_address.length > 255 || bug_address.length < 3) {
             const nextPrompt = await ctx.reply('⚠️ Alamat Bug tidak valid (3-255 char). Ulangi:');
             if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
             return;
@@ -6650,15 +6789,19 @@ Silakan scan QRIS untuk top up.`;
         const botPrompt = userState[userId]?.lastBotMessageId;
         if(botPrompt) { try { await ctx.telegram.deleteMessage(ctx.chat.id, botPrompt); } catch(e){} }
         if (userState[userId]) userState[userId].lastBotMessageId = null;
+
         let subdomain = ctx.message.text.trim();
-        
+
+        // Tentukan nilai subdomain (null jika "kosong", "-", atau string kosong)
         state.bug_subdomain = (subdomain.toLowerCase() === 'kosong' || subdomain === '' || subdomain === '-') ? null : subdomain;
+        // Validasi panjang jika subdomain tidak null
         if (state.bug_subdomain && (state.bug_subdomain.length > 255 || state.bug_subdomain.length < 2)) {
             const nextPrompt = await ctx.reply('⚠️ Subdomain Bug tidak valid (2-255 char, atau "kosong"). Ulangi:');
             if (userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
             return;
         }
-        
+
+        // Tampilkan konfirmasi kepada admin sebelum menyimpan
         const confirmationMessage = `
 📝 *Konfirmasi Penambahan Bug*
 ────────────────────
@@ -6668,7 +6811,7 @@ Silakan scan QRIS untuk top up.`;
 *Subdomain/SNI:* ${state.bug_subdomain ? `\`${escapeHtml(state.bug_subdomain)}\`` : 'Tidak Ada'}
 ────────────────────
 Simpan bug ini?`;
-        state.step = 'admin_addbug_confirm'; 
+        state.step = 'admin_addbug_confirm'; // Ubah step untuk menunggu konfirmasi
         const confirmMsg = await ctx.reply(confirmationMessage, {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -6678,19 +6821,21 @@ Simpan bug ini?`;
                 ]
             }
         });
-        if (userState[userId]) userState[userId].lastBotMessageId = confirmMsg.message_id; 
+        if (userState[userId]) userState[userId].lastBotMessageId = confirmMsg.message_id;
+
     }
-    
+
     // ==========================================================
-    // ALUR 6: ADMIN - EDIT SERVER
+    // ALUR 10: ADMIN - EDIT SERVER (input teks untuk field)
     // ==========================================================
-    else if (state.step && state.step.startsWith('input_edit_')) { 
+    else if (state.step && state.step.startsWith('input_edit_')) {
         if (!adminIds.includes(String(userId))) { delete userState[userId]; return; }
 
-        const field = state.field; 
+        const field = state.field; // Nama field yang akan diedit (e.g., 'domain', 'harga', 'quota')
         const newValue = ctx.message.text.trim();
-        const serverIdToEdit = state.serverId; 
+        const serverIdToEdit = state.serverId;
 
+        // Hapus pesan ketikan user dan pesan prompt bot sebelumnya
         const botEditPromptId = userState[userId]?.lastBotMessageId;
         if (botEditPromptId) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, botEditPromptId); } catch (e) {}
@@ -6699,35 +6844,33 @@ Simpan bug ini?`;
         try { await ctx.telegram.deleteMessage(ctx.chat.id, ctx.message.message_id); } catch (e) {}
 
 
-        if (!newValue && field !== 'auth' && field !== 'domain') { 
-            const newPrompt = await ctx.reply(`⚠️ Input untuk ${field.replace(/_/g, ' ')} tidak boleh kosong. Ulangi:`);
-            if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-            return;
-        }
-        
+        // Validasi input berdasarkan jenis field
         let isValidInput = true;
         let errorPromptMessage = '';
         if (['batas_create_akun', 'iplimit', 'quota', 'harga', 'harga_reseller'].includes(field)) {
-            if (!/^\d+$/.test(newValue) || parseInt(newValue, 10) < 0) { 
+            if (!/^\d+$/.test(newValue) || parseInt(newValue, 10) < 0) { // Harus angka non-negatif
                 errorPromptMessage = `⚠️ Input untuk ${field.replace(/_/g, ' ')} harus berupa angka non-negatif. Ulangi:`;
                 isValidInput = false;
             }
         } else if (['domain', 'nama_server', 'auth'].includes(field)) {
-            if (newValue.length > 255) { 
+            if (newValue.length > 255) { // Batas panjang
                 errorPromptMessage = `⚠️ Input untuk ${field.replace(/_/g, ' ')} terlalu panjang (maks 255 karakter). Ulangi:`;
                 isValidInput = false;
             }
         }
+        // Tambahkan validasi lain jika ada field dengan aturan khusus
+
         if (!isValidInput) {
             const newPrompt = await ctx.reply(errorPromptMessage);
             if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
             return;
         }
-        
+
         try {
             let updateQuery = '';
-            let displayFieldName = field.replace(/_/g, ' ');
+            let displayFieldName = field.replace(/_/g, ' '); // Format nama field untuk tampilan
 
+            // Tentukan query UPDATE berdasarkan field yang akan diedit
             switch (field) {
                 case 'batas_create_akun': updateQuery = `UPDATE Server SET batas_create_akun = ? WHERE id = ?`; break;
                 case 'domain': updateQuery = `UPDATE Server SET domain = ? WHERE id = ?`; break;
@@ -6740,11 +6883,17 @@ Simpan bug ini?`;
                 default:
                     await ctx.reply('⚠️ Field edit tidak dikenal.');
                     delete userState[userId];
-                    return sendAdminMenu(ctx); 
+                    return sendAdminMenu(ctx); // Kembali ke menu admin jika field tidak dikenal
             }
 
+            // Eksekusi update DB
             await new Promise((resolve, reject) => {
-                db.run(updateQuery, [field.includes('harga') || field.includes('quota') || field.includes('iplimit') || field.includes('batas_create_akun') ? parseInt(newValue) : newValue, serverIdToEdit], function(err) {
+                db.run(updateQuery, [
+                    field.includes('harga') || field.includes('quota') || field.includes('iplimit') || field.includes('batas_create_akun')
+                        ? parseInt(newValue, 10) // Parse ke integer untuk angka
+                        : newValue, // Gunakan string untuk teks
+                    serverIdToEdit
+                ], function(err) {
                     if (err) reject(err);
                     else if (this.changes === 0) reject(new Error('Server tidak ditemukan atau nilai tidak berubah.'));
                     else resolve();
@@ -6755,15 +6904,18 @@ Simpan bug ini?`;
             console.error(`Error saat mengedit server (field: ${field}):`, error);
             await ctx.reply(`🚫 Gagal mengedit ${field.replace(/_/g, ' ')}: ${error.message}`);
         } finally {
-            delete userState[userId];
-            await sendAdminMenu(ctx); 
+            delete userState[userId]; // Bersihkan state
+            await sendAdminMenu(ctx); // Kembali ke menu admin
         }
-    }  
-    
+    }
+
     // ==========================================================
-    // JIKA STATE TIDAK DIKENALI
+    // JIKA STATE TIDAK DIKENALI OLEH HANDLER TEXT
     // ==========================================================
     else {
+        // Ini adalah case fallback jika ada pesan teks yang masuk
+        // tetapi tidak cocok dengan alur state yang sedang aktif.
+        // Anda bisa menambahkan log di sini jika diperlukan untuk debugging.
         // console.log(`Input teks tidak ditangani untuk user ${userId} dengan state:`, JSON.stringify(state), `Teks: "${ctx.message.text}"`);
     }
 });
