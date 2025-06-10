@@ -162,7 +162,27 @@ db.run(`CREATE TABLE IF NOT EXISTS Bugs (
             console.log('Tabel Bugs berhasil dibuat atau sudah ada.');
         }
     });
-}); // Ak
+}); 
+
+db.run(`CREATE TABLE IF NOT EXISTS payg_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    server_id INTEGER NOT NULL,
+    account_username TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    hourly_rate INTEGER NOT NULL,
+    last_billed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT 1,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (server_id) REFERENCES Server(id) ON DELETE CASCADE
+)`, (err) => {
+    if (err) {
+        console.error('Kesalahan membuat tabel payg_sessions:', err.message);
+    } else {
+        console.log('Tabel payg_sessions berhasil dibuat atau sudah ada.');
+    }
+});
 
 
 const userState = {};
@@ -222,6 +242,180 @@ bot.command(['start', 'menu'], async (ctx) => {
   console.log(`User ${userId} sudah menjadi anggota. Menampilkan menu tutorial.`);
   await displayTutorialDashboard(ctx);
 });
+
+// Tambahkan blok ini setelah: const db = new sqlite3.Database(...)
+
+// ===================================================================
+// =================== LOGIKA INTI PAY-AS-YOU-GO =====================
+// ===================================================================
+
+const PAYG_MINIMUM_BALANCE_THRESHOLD = 200; // Layanan berhenti jika saldo di bawah ini
+// GANTI SELURUH FUNGSI stopPaygSession ANDA DENGAN VERSI INI
+
+/**
+ * Menghentikan sesi Pay-As-You-Go, menghapus akun di server, dan menonaktifkan di DB.
+ * @param {number} sessionId ID dari tabel payg_sessions.
+ * @param {string} reason Alasan penghentian.
+ * @returns {Promise<boolean>} True jika berhasil, false jika gagal.
+ */
+async function stopPaygSession(sessionId, reason) {
+    console.log(`[PAYG] Memulai penghentian sesi ID: ${sessionId} karena: ${reason}`);
+    try {
+        const session = await new Promise((resolve, reject) => {
+            db.get(`SELECT ps.*, s.nama_server
+                    FROM payg_sessions ps
+                    JOIN Server s ON ps.server_id = s.id
+                    WHERE ps.id = ? AND ps.is_active = 1`, [sessionId], (err, row) => {
+                if (err) return reject(new Error(`DB error saat ambil sesi PAYG ${sessionId}: ${err.message}`));
+                resolve(row);
+            });
+        });
+
+        if (!session) {
+            console.warn(`[PAYG] Sesi ${sessionId} tidak ditemukan atau sudah tidak aktif saat akan dihentikan.`);
+            return false;
+        }
+
+        const { user_id, account_username, protocol, server_id, nama_server } = session;
+
+        await callDeleteAPI(protocol, account_username, server_id);
+        console.log(`[PAYG] Permintaan hapus akun ${account_username} (${protocol}) di server fisik telah dikirim.`);
+
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.run("BEGIN TRANSACTION;");
+                db.run("UPDATE payg_sessions SET is_active = 0 WHERE id = ?", [sessionId], (err) => {
+                    if (err) return db.run("ROLLBACK;", () => reject(err));
+                });
+                db.run("UPDATE Server SET total_create_akun = CASE WHEN total_create_akun > 0 THEN total_create_akun - 1 ELSE 0 END WHERE id = ?", [server_id], (err) => {
+                    if (err) return db.run("ROLLBACK;", () => reject(err));
+                });
+                db.run("COMMIT;", (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        });
+        console.log(`[PAYG] Sesi ${sessionId} telah dinonaktifkan di DB dan slot server dikembalikan.`);
+
+        // Kirim notifikasi ke pengguna
+        await callTelegramApiWithRetry(() => bot.telegram.sendMessage(user_id,
+            `❗️ *Layanan Pay-As-You-Go Dihentikan* ❗️\n\n` +
+            `Layanan untuk akun *${escapeHtml(account_username)}* (${protocol.toUpperCase()}) di server *${escapeHtml(nama_server)}* telah dihentikan.\n\n` +
+            `*Alasan:* ${reason}.`,
+            { parse_mode: 'Markdown' }
+        ));
+
+        // =======================================================
+        // ==> BLOK NOTIFIKASI PENGHENTIAN KE GRUP (BARU) <==
+        // =======================================================
+        let userDisplayName = `User ID ${user_id}`;
+        try {
+            const userInfo = await bot.telegram.getChat(user_id);
+            userDisplayName = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ID ${user_id}`);
+        } catch (e) {
+            console.warn(`[PAYG_STOP_NOTIF] Gagal mendapatkan info chat untuk user ${user_id}: ${e.message}`);
+        }
+
+        const groupMessage = `
+──────────────────────
+⟨ ⏹️ Layanan PAYG Dihentikan ⟩
+──────────────────────
+Pengguna: <a href="tg://user?id=${user_id}">${escapeHtml(userDisplayName)}</a>
+──────────────────────
+  Detail Akun:
+  ➥ Layanan: ${protocol.toUpperCase()}
+  ➥ Server: ${escapeHtml(nama_server)}
+  ➥ Akun: <code>${escapeHtml(account_username)}</code>
+──────────────────────
+Alasan: <b>${escapeHtml(reason)}</b>
+Tanggal: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+`;
+
+        if (GROUP_ID) {
+            try {
+                await callTelegramApiWithRetry(() => 
+                    bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'HTML', disable_web_page_preview: true })
+                );
+                console.log(`[PAYG_STOP_NOTIF] Notifikasi penghentian PAYG untuk ${account_username} berhasil dikirim ke grup.`);
+            } catch (error) {
+                console.error(`[PAYG_STOP_NOTIF] Gagal mengirim notifikasi penghentian PAYG ke grup:`, error.message);
+            }
+        }
+        // =======================================================
+        // ==> AKHIR BLOK NOTIFIKASI BARU <==
+        // =======================================================
+
+        return true;
+
+    } catch (error) {
+        console.error(`[PAYG] Error fatal saat menghentikan sesi ${sessionId}:`, error);
+        await bot.telegram.sendMessage(ADMIN, `🚨 PAYG STOP SESSION ERROR 🚨\nSesi ID: ${sessionId}\nError: ${error.message}`).catch(() => {});
+        return false;
+    }
+}
+
+/**
+ * Mesin penagihan yang berjalan secara periodik untuk model Pay-As-You-Go.
+ */
+async function processPaygBilling() {
+    console.log('[PAYG_ENGINE] Memulai siklus pemeriksaan penagihan...');
+    try {
+        const activeSessions = await new Promise((resolve, reject) => {
+            db.all("SELECT * FROM payg_sessions WHERE is_active = 1", [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        if (activeSessions.length === 0) return;
+        
+        console.log(`[PAYG_ENGINE] Ditemukan ${activeSessions.length} sesi PAYG aktif.`);
+
+        for (const session of activeSessions) {
+            const now = new Date();
+            const lastBilled = new Date(session.last_billed_at);
+            const hoursPassed = (now.getTime() - lastBilled.getTime()) / (1000 * 60 * 60);
+
+            if (hoursPassed >= 1) {
+                console.log(`[PAYG_ENGINE] Sesi ${session.id} (user: ${session.user_id}) perlu ditagih.`);
+                const user = await new Promise((resolve) => db.get("SELECT saldo FROM users WHERE user_id = ?", [session.user_id], (_, r) => resolve(r)));
+
+                if (!user) {
+                    await stopPaygSession(session.id, 'Data pengguna tidak ditemukan di sistem.');
+                    continue;
+                }
+                
+                if (user.saldo >= session.hourly_rate + PAYG_MINIMUM_BALANCE_THRESHOLD) {
+                    await new Promise((resolve, reject) => {
+                       db.run("UPDATE users SET saldo = saldo - ? WHERE user_id = ?", [session.hourly_rate, session.user_id], (err) => {
+                           if(err) return reject(err);
+                           db.run("UPDATE payg_sessions SET last_billed_at = ? WHERE id = ?", [now.toISOString(), session.id], (err) => err ? reject(err) : resolve());
+                       });
+                    });
+                    console.log(`[PAYG_ENGINE] Berhasil menagih sesi ${session.id}. Saldo dipotong Rp${session.hourly_rate}.`);
+                } else {
+                    console.log(`[PAYG_ENGINE] Saldo tidak cukup untuk sesi ${session.id}. Menghentikan layanan...`);
+                    await stopPaygSession(session.id, `Saldo tidak mencukupi (tersisa Rp${user.saldo.toLocaleString('id-ID')})`);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[PAYG_ENGINE] Terjadi kesalahan pada mesin penagihan:', error);
+    }
+}
+
+// Menjalankan mesin penagihan setiap 5 menit
+cron.schedule('*/5 * * * *', processPaygBilling, {
+    scheduled: true,
+    timezone: "Asia/Jakarta"
+});
+console.log(`[PAYG_ENGINE] Mesin penagihan Pay-As-You-Go dijadwalkan berjalan setiap 5 menit.`);
+setTimeout(processPaygBilling, 15000); // Panggil sekali 15 detik setelah start
+
+// ===================================================================
+// ================= AKHIR LOGIKA PAY-AS-YOU-GO ======================
+// ===================================================================
 
 // Helper function for retrying Telegram API calls
 async function callTelegramApiWithRetry(apiCallFunction, maxRetries = 3, initialDelayMs = 1000) {
@@ -1050,6 +1244,68 @@ async function sendAdminNotificationTopup(username, userId, amount, uniqueAmount
   }
 }
 
+// Tambahkan fungsi baru ini di kode Anda
+
+/**
+ * Mengirim notifikasi ke grup ketika ada pembelian akun Pay-As-You-Go.
+ * @param {number} userId ID pengguna yang membeli.
+ * @param {string} accountUsername Username akun yang dibuat.
+ * @param {string} protocol Protokol yang dibeli (ssh, vmess, dll).
+ * @param {string} serverName Nama server tempat akun dibuat.
+ * @param {number} hourlyRate Biaya per jam untuk layanan tersebut.
+ */
+async function sendPaygPurchaseNotification(userId, accountUsername, protocol, serverName, hourlyRate) {
+    let userDisplayName = `User ID ${userId}`;
+    let userRoleText = 'Member 👤';
+
+    try {
+        // Ambil info user dari DB untuk mendapatkan role dan nama tampilan
+        const user = await new Promise((resolve, reject) => {
+            db.get("SELECT username, role FROM users WHERE user_id = ?", [userId], (err, row) => {
+                if (err) return reject(err);
+                resolve(row);
+            });
+        });
+
+        if (user) {
+            userDisplayName = cleanUsername(user.username) || `User ID ${userId}`;
+            userRoleText = user.role === 'reseller' ? 'Reseller 🛒' : 'Member 👤';
+        }
+    } catch (e) {
+        console.warn(`[PAYG_NOTIF] Gagal mendapatkan info user ${userId} dari DB: ${e.message}`);
+    }
+
+    // Susun pesan notifikasi
+    const message = `
+──────────────────────
+⟨ ⏱️ TRX PAY AS YOU GO ⟩
+──────────────────────
+THANKS TO
+➥ User  : <a href="tg://user?id=${userId}">${escapeHtml(userDisplayName)}</a>
+➥ Role  : ${userRoleText}
+──────────────────────
+➥ Layanan : ${protocol.toUpperCase()}
+<blockquote>➥ Server : ${escapeHtml(serverName)}</blockquote>
+➥ Akun    : <code>${escapeHtml(accountUsername)}</code>
+➥ Model   : <b>Pay As You Go</b>
+➥ Biaya   : <b>Rp ${hourlyRate.toLocaleString('id-ID')} / Jam</b>
+➥ Tanggal : ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+──────────────────────
+`;
+
+    // Kirim pesan ke grup jika GROUP_ID sudah di-set
+    if (GROUP_ID) {
+        try {
+            await callTelegramApiWithRetry(() => 
+                bot.telegram.sendMessage(GROUP_ID, message, { parse_mode: 'HTML', disable_web_page_preview: true })
+            );
+            console.log(`[PAYG_NOTIF] Notifikasi pembelian PAYG untuk ${accountUsername} berhasil dikirim ke grup.`);
+        } catch (error) {
+            console.error(`[PAYG_NOTIF] Gagal mengirim notifikasi pembelian PAYG ke grup:`, error.message);
+        }
+    }
+}
+
 async function sendGroupNotificationTopup(username, userId, amount, uniqueAmount, bonusAmount = 0) {
   const userOriginalTopup = amount;
   const totalSaldoMasuk = userOriginalTopup + bonusAmount;
@@ -1631,7 +1887,7 @@ const keyboard = [
         { text: '💰 TOPUP SALDO', callback_data: 'topup_saldo' }
     ],
     [
-       { text: '🗂️ HAPUS AKUN (REFUND SALDO)', callback_data: 'my_accounts' }
+       { text: '🗂️ KELOLA AKUN', callback_data: 'my_accounts_list' }
     ],
     [ 
        
@@ -2094,382 +2350,280 @@ Gunakan perintah di atas dengan format yang benar.
   }
   userMessages[userId] = sentHelpMessage.message_id;
 });
-
-// GANTI SEPENUHNYA handler 'my_accounts' LAMA Anda dengan yang BARU ini
-bot.action('my_accounts', async (ctx) => {
+// Hapus semua handler: my_accounts, myacc_server_..., myacc_proto_...
+// 1. Handler utama untuk tombol "Kelola Akun"
+bot.action('my_accounts_list', async (ctx) => {
     const userId = ctx.from.id;
     await ctx.answerCbQuery("Memuat akun Anda...");
 
     try {
-        // --- BAGIAN 1: Mengambil rekap jumlah akun per protokol ---
-        const protocolCounts = { SSH: 0, VMESS: 0, VLESS: 0, TROJAN: 0 };
-        const countQuery = `
-            SELECT protocol, COUNT(*) as count 
-            FROM created_accounts 
-            WHERE created_by_user_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
-            GROUP BY protocol
-        `;
-        const counts = await new Promise((resolve, reject) => {
-            db.all(countQuery, [userId], (err, rows) => err ? reject(err) : resolve(rows));
+        // Ambil semua jenis akun dalam satu kali jalan untuk efisiensi
+        const fixedAccounts = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT 'fixed' as type, ca.id, ca.account_username, ca.protocol, ca.expiry_date, s.nama_server
+                FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
+                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND ca.expiry_date > DATETIME('now', 'localtime')
+            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
 
-        // Masukkan hasil query ke dalam objek rekap
-        counts.forEach(row => {
-            // Menggunakan .toUpperCase() untuk mencocokkan key di objek
-            const protocolName = row.protocol.toUpperCase();
-            if (protocolCounts.hasOwnProperty(protocolName)) {
-                protocolCounts[protocolName] = row.count;
-            }
+        const paygAccounts = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT 'payg' as type, ps.id, ps.account_username, ps.protocol, ps.hourly_rate, s.nama_server
+                FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
+                WHERE ps.user_id = ? AND ps.is_active = 1
+            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
 
-        // --- BAGIAN 2: Mengambil daftar server unik yang dimiliki pengguna ---
-        const userServers = await new Promise((resolve, reject) => {
-            const query = `
-                SELECT DISTINCT s.id, s.nama_server
-                FROM created_accounts ca
-                JOIN Server s ON ca.server_id = s.id
-                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
-                ORDER BY s.nama_server ASC
-            `;
-            db.all(query, [userId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
+        const allAccounts = [...fixedAccounts, ...paygAccounts];
 
-        if (userServers.length === 0) {
+        if (allAccounts.length === 0) {
             return ctx.editMessageText("Anda tidak memiliki akun aktif saat ini.", {
-                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'kembali' }]] }
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]] }
             });
         }
-        
-        // --- BAGIAN 3: Menyusun pesan dan keyboard ---
-        let message = `<b>🗂️ Akun Saya</b>\n\n`;
-        message += `SSH: <b>${protocolCounts.SSH} Akun</b>\n`;
-        message += `VMESS: <b>${protocolCounts.VMESS} Akun</b>\n`;
-        message += `VLESS: <b>${protocolCounts.VLESS} Akun</b>\n`;
-        message += `TROJAN: <b>${protocolCounts.TROJAN} Akun</b>\n\n`;
-        message += `Silakan pilih server untuk melihat detail akun Anda:`;
-        
-        // Buat keyboard 2 kolom (kanan-kiri)
+
+        // =======================================================
+        // ==> MODIFIKASI UTAMA: MEMBUAT LAYOUT KEYBOARD 2 KOLOM <==
+        // =======================================================
         const keyboard = [];
-        for (let i = 0; i < userServers.length; i += 2) {
-            const row = [];
-            // Tombol pertama dalam baris
-            row.push({ text: `🛰️ ${userServers[i].nama_server}`, callback_data: `myacc_server_${userServers[i].id}` });
-            
-            // Cek jika ada tombol kedua untuk baris yang sama
-            if (userServers[i + 1]) {
-                row.push({ text: `🛰️ ${userServers[i + 1].nama_server}`, callback_data: `myacc_server_${userServers[i + 1].id}` });
+        // Loop dengan increment 2 untuk memproses akun secara berpasangan
+        for (let i = 0; i < allAccounts.length; i += 2) {
+            const row = []; // Buat baris baru untuk setiap pasangan
+            const acc1 = allAccounts[i];
+            const acc2 = allAccounts[i + 1]; // Ambil akun kedua (jika ada)
+
+            // --- Proses Akun Pertama dalam baris ---
+            let btnText1 = '';
+            let cbData1 = '';
+            if (acc1.type === 'fixed') {
+                const expiry = new Date(acc1.expiry_date);
+                const dateStr = expiry.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+                // Menggunakan emoji untuk menghemat tempat dan memberi petunjuk visual
+                btnText1 = `🗓️ ${acc1.protocol.toUpperCase()} ${escapeHtml(acc1.account_username)}`;
+                cbData1 = `manage_account_fixed_${acc1.id}`;
+            } else { // type === 'payg'
+                btnText1 = `⏱️ ${acc1.protocol.toUpperCase()} ${escapeHtml(acc1.account_username)}`;
+                cbData1 = `manage_account_payg_${acc1.id}`;
             }
+            row.push({ text: btnText1, callback_data: cbData1 });
+
+            // --- Proses Akun Kedua dalam baris (jika ada) ---
+            if (acc2) {
+                let btnText2 = '';
+                let cbData2 = '';
+                if (acc2.type === 'fixed') {
+                    const expiry = new Date(acc2.expiry_date);
+                    const dateStr = expiry.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+                    btnText2 = `🗓️ ${acc2.protocol.toUpperCase()} ${escapeHtml(acc2.account_username)}`;
+                    cbData2 = `manage_account_fixed_${acc2.id}`;
+                } else { // type === 'payg'
+                    btnText2 = `⏱️ ${acc2.protocol.toUpperCase()} ${escapeHtml(acc2.account_username)}`;
+                    cbData2 = `manage_account_payg_${acc2.id}`;
+                }
+                row.push({ text: btnText2, callback_data: cbData2 });
+            }
+            
+            // Tambahkan baris yang sudah terisi (1 atau 2 tombol) ke keyboard utama
             keyboard.push(row);
         }
+        // =======================================================
+        // ==> AKHIR MODIFIKASI <==
+        // =======================================================
 
         keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'kembali' }]);
 
+        const message = `🗂️ *Kelola Akun Anda*\n\n*🗓️ = Berlangganan | ⏱️ = Pay As You Go*\nSilakan pilih akun di bawah ini untuk melihat detail aksi.`;
+        
         await ctx.editMessageText(message, {
-            parse_mode: 'HTML',
+            parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: keyboard }
         });
 
     } catch (error) {
-        console.error("Error mengambil server milik pengguna:", error);
-        await ctx.editMessageText("⚠️ Terjadi kesalahan saat memuat daftar akun Anda.");
+        console.error("Error saat menampilkan daftar gabungan akun pengguna:", error);
+        await ctx.editMessageText("⚠️ Terjadi kesalahan saat menampilkan daftar akun Anda.");
     }
 });
 
-bot.action(/myacc_server_(\d+)/, async (ctx) => {
-    const userId = ctx.from.id;
-    const serverId = parseInt(ctx.match[1]);
-    await ctx.answerCbQuery("Memuat protokol...");
-
-    try {
-        // Ambil nama server untuk judul
-        const server = await new Promise((resolve, reject) => {
-            db.get("SELECT nama_server FROM Server WHERE id = ?", [serverId], (err, row) => err || !row ? reject() : resolve(row));
-        });
-
-        // Query untuk mengambil protokol unik di server yang dipilih
-        const userProtocols = await new Promise((resolve, reject) => {
-            const query = `
-                SELECT DISTINCT protocol FROM created_accounts
-                WHERE created_by_user_id = ? AND server_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
-                ORDER BY protocol ASC
-            `;
-            db.all(query, [userId, serverId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-
-        // --- TAMBAHAN KODE BARU DIMULAI DI SINI ---
-        // Query untuk menghitung jumlah akun per protokol di server yang dipilih
-        const protocolCountsRaw = await new Promise((resolve, reject) => {
-            const countQuery = `
-                SELECT protocol, COUNT(*) as count
-                FROM created_accounts
-                WHERE created_by_user_id = ? AND server_id = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
-                GROUP BY protocol
-            `;
-            db.all(countQuery, [userId, serverId], (err, rows) => err ? reject(err) : resolve(rows));
-        });
-
-        // Inisialisasi objek untuk menyimpan jumlah akun per protokol
-        const protocolCounts = {
-            SSH: 0,
-            VMESS: 0,
-            VLESS: 0,
-            TROJAN: 0
-        };
-
-        // Mengisi objek dengan data dari database
-        protocolCountsRaw.forEach(row => {
-            const protocolName = row.protocol.toUpperCase();
-            if (protocolCounts.hasOwnProperty(protocolName)) {
-                protocolCounts[protocolName] = row.count;
-            }
-        });
-        // --- TAMBAHAN KODE BARU BERAKHIR DI SINI ---
-
-        let message = `📡 Server: ${server.nama_server}\n\n`;
-        // --- MENGGUNAKAN DATA REKAP DI PESAN ---
-        message += `SSH: ${protocolCounts.SSH}\n`;
-        message += `VMESS: ${protocolCounts.VMESS}\n`;
-        message += `VLESS: ${protocolCounts.VLESS}\n`;
-        message += `TROJAN: ${protocolCounts.TROJAN}\n\n`;
-        // ----------------------------------------
-        message += `Silakan pilih protokol:`;
-
-        const keyboard = userProtocols.map(p => {
-            return [{ text: ` ${p.protocol.toUpperCase()}`, callback_data: `myacc_proto_${serverId}_${p.protocol}` }];
-        });
-        
-        // Pastikan callback untuk kembali ke "Kelola Akun Saya" jika Anda sudah menerapkan saran sebelumnya.
-        // Jika belum, biarkan tetap `my_accounts` seperti kode lama Anda.
-        keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]); // Jika sudah pakai my_accounts_list
-        // Atau: keyboard.push([{ text: '🔙 Kembali Pilih Server', callback_data: 'my_accounts' }]); // Jika belum pakai my_accounts_list
-
-        await ctx.editMessageText(message, {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: keyboard }
-        });
-
-    } catch (error) {
-        console.error("Error mengambil protokol milik pengguna:", error);
-        await ctx.editMessageText("⚠️ Terjadi kesalahan.");
-    }
-});
-
-// TAMBAHKAN handler BARU ini untuk menampilkan daftar akun final
-bot.action(/myacc_proto_(\d+)_(.+)/, async (ctx) => {
-    const userId = ctx.from.id;
-    const serverId = parseInt(ctx.match[1]);
-    const protocol = ctx.match[2];
-    await ctx.answerCbQuery();
-
-    try {
-        const userAccounts = await new Promise((resolve, reject) => {
-            const query = `
-                SELECT id, account_username, expiry_date FROM created_accounts
-                WHERE created_by_user_id = ? AND server_id = ? AND protocol = ? AND is_active = 1 AND expiry_date > DATETIME('now', 'localtime')
-                ORDER BY expiry_date ASC
-            `;
-            db.all(query, [userId, serverId, protocol], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-        
-        const server = await new Promise((resolve, reject) => {
-            db.get("SELECT nama_server FROM Server WHERE id = ?", [serverId], (err, row) => err || !row ? reject() : resolve(row));
-        });
-
-        let message = `📜 Daftar Akun ${protocol.toUpperCase()} \nServer: <b>${server.nama_server}</b>\n\n`;
-        const keyboard = [];
-
-        userAccounts.forEach(acc => {
-            const expiry = new Date(acc.expiry_date);
-            const dateString = expiry.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-            message += `👤  <b>${acc.account_username}</b>\n   ➥  Expired: ${dateString}\n\n`;
-            keyboard.push([{ text: `Hapus & Refund: ${acc.account_username}`, callback_data: `delete_refund_request_${acc.id}` }]);
-        });
-
-        keyboard.push([{ text: '🔙 Kembali Pilih Protokol', callback_data: `myacc_server_${serverId}` }]);
-
-        await ctx.editMessageText(message, {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: keyboard },
-            disable_web_page_preview: true
-        });
-
-    } catch (error) {
-        console.error("Error menampilkan daftar akun final:", error);
-        await ctx.editMessageText("⚠️ Terjadi kesalahan.");
-    }
-});
-
-// GANTI SEPENUHNYA HANDLER INI DENGAN VERSI BARU
-bot.action(/delete_refund_request_(\d+)/, async (ctx) => {
-    const accountId = parseInt(ctx.match[1]);
+// 2. Handler saat pengguna memilih akun BERLANGGANAN (fixed-term)
+bot.action(/manage_account_fixed_(\d+)/, async (ctx) => {
+    const accountId = parseInt(ctx.match[1], 10);
     const userId = ctx.from.id;
     await ctx.answerCbQuery();
 
     try {
         const acc = await new Promise((resolve, reject) => {
             const query = `
-                SELECT ca.*, s.harga, s.harga_reseller FROM created_accounts ca
-                JOIN Server s ON ca.server_id = s.id
+                SELECT ca.*, s.harga, s.harga_reseller, s.nama_server 
+                FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
                 WHERE ca.id = ? AND ca.created_by_user_id = ?`;
-            db.get(query, [accountId, userId], (err, row) => (err || !row) ? reject(new Error("Akun tidak ditemukan atau bukan milik Anda.")) : resolve(row));
+            db.get(query, [accountId, userId], (err, row) => err || !row ? reject(new Error("Akun tidak ditemukan.")) : resolve(row));
         });
 
         const user = await new Promise((resolve, reject) => {
-            db.get("SELECT role FROM users WHERE user_id = ?", [userId], (err, row) => (err || !row) ? reject(new Error("User tidak ditemukan.")) : resolve(row));
+            db.get("SELECT role FROM users WHERE user_id = ?", [userId], (err, row) => err || !row ? reject(new Error("User tidak ditemukan.")) : resolve(row));
         });
 
-        const now = new Date();
-        const expiry = new Date(acc.expiry_date);
-        if (now >= expiry) {
-            return ctx.answerCbQuery("Akun ini sudah kedaluwarsa, tidak ada refund.", { show_alert: true });
-        }
-
-        // ======================================================================
-        //          PERBAIKAN LOGIKA PERHITUNGAN REFUND DIMULAI DI SINI
-        // ======================================================================
-
-        // 1. Hitung total harga yang dibayar saat pembuatan akun
         const hargaPerHari = user.role === 'reseller' ? acc.harga_reseller : acc.harga;
         const totalHargaAwal = calculatePrice(hargaPerHari, acc.duration_days);
-
-        // 2. Hitung berapa hari yang sudah terpakai (minimal 1 hari)
-        const creationDate = new Date(acc.creation_date);
-        const msTerpakai = now.getTime() - creationDate.getTime();
-        let hariTerpakai = Math.ceil(msTerpakai / (1000 * 60 * 60 * 24));
-        if (hariTerpakai < 1) {
-            hariTerpakai = 1; // Pemakaian minimal dihitung 1 hari
-        }
-
-        // 3. Hitung biaya yang sudah terpakai
+        const hariTerpakai = Math.ceil((new Date().getTime() - new Date(acc.creation_date).getTime()) / (1000 * 60 * 60 * 24)) || 1;
         const biayaTerpakai = hariTerpakai * hargaPerHari;
-
-        // 4. Hitung jumlah refund yang sebenarnya
-        let refundAmount = totalHargaAwal - biayaTerpakai;
-        if (refundAmount < 0) {
-            refundAmount = 0; // Pastikan refund tidak minus
-        }
+        let refundAmount = Math.floor((totalHargaAwal - biayaTerpakai) / 100) * 100;
+        if (refundAmount < 0) refundAmount = 0;
         
-        // Pembulatan nominal refund ke ratusan terdekat untuk kebersihan
-        refundAmount = Math.floor(refundAmount / 100) * 100;
-        
-        // ======================================================================
-        //                      AKHIR PERBAIKAN LOGIKA
-        // ======================================================================
-        
-        if (refundAmount <= 0) {
-            return ctx.answerCbQuery("Tidak ada sisa masa aktif yang bisa di-refund.", { show_alert: true });
-        }
-
-        userState[userId] = { refundAmount, accountId };
-
         const message = `
-⚠️ <b>Konfirmasi Hapus & Refund</b> ⚠️
-Anda yakin ingin menghapus akun: <b>${acc.account_username}</b>?
-
+🗑️ *Hapus & Refund Akun*
+──────────────────────
+Anda akan menghapus akun:
+🔹 Akun: <b>${escapeHtml(acc.account_username)}</b> (${acc.protocol.toUpperCase()})
+🔹 Server: <b>${escapeHtml(acc.nama_server)}</b>
+🔹 Model: Berlangganan
+──────────────────────
+<b>Perhitungan Refund:</b>
 - Total Bayar: Rp ${totalHargaAwal.toLocaleString('id-ID')}
 - Terpakai: ~${hariTerpakai} hari (Rp ${biayaTerpakai.toLocaleString('id-ID')})
 - Sisa Saldo Kembali: <b>Rp ${refundAmount.toLocaleString('id-ID')}</b>
-
-Tindakan ini tidak bisa dibatalkan.
+──────────────────────
+Apakah Anda yakin? Tindakan ini tidak bisa dibatalkan.
         `;
+
         await ctx.editMessageText(message, {
             parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '✅ Ya, Hapus & Refund', callback_data: `delete_refund_confirm` }],
-                    [{ text: '❌ Batal', callback_data: 'manage_my_accounts' }]
+                    [{ text: '✅ Ya, Hapus & Refund', callback_data: `delete_refund_confirm_${accountId}` }],
+                    [{ text: '❌ Batal', callback_data: 'my_accounts_list' }]
                 ]
             }
         });
     } catch (e) {
-        console.error(e);
-        await ctx.answerCbQuery(`Error: ${e.message}`, { show_alert: true });
+        console.error("Error di manage_account_fixed:", e);
+        await ctx.answerCbQuery(e.message, { show_alert: true });
     }
 });
 
-
-// GANTI SEPENUHNYA HANDLER delete_refund_confirm ANDA DENGAN INI
-bot.action('delete_refund_confirm', async (ctx) => {
-    const userId = ctx.from.id; // Ini adalah ID pengguna yang melakukan aksi hapus
-    const state = userState[userId];
-
-    if (!state || !state.refundAmount || !state.accountId) {
-        return ctx.answerCbQuery("Sesi tidak valid atau telah kedaluwarsa.", { show_alert: true });
-    }
+// 3. Handler saat pengguna memilih akun PAY-AS-YOU-GO
+bot.action(/manage_account_payg_(\d+)/, async (ctx) => {
+    const sessionId = parseInt(ctx.match[1], 10);
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery();
     
-    const { refundAmount, accountId } = state;
-    delete userState[userId];
+    try {
+        const session = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT ps.*, s.nama_server FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
+                WHERE ps.id = ? AND ps.user_id = ?`, 
+                [sessionId, userId], 
+                (err, row) => err || !row ? reject(new Error("Sesi PAYG tidak ditemukan.")) : resolve(row)
+            );
+        });
 
+        const message = `
+⏹️ *Hentikan Layanan Pay As You Go*
+──────────────────────
+Anda akan menghentikan layanan untuk akun:
+🔹 Akun: <b>${escapeHtml(session.account_username)}</b> (${session.protocol.toUpperCase()})
+🔹 Server: <b>${escapeHtml(session.nama_server)}</b>
+🔹 Model: Pay As You Go
+──────────────────────
+<b>INFORMASI:</b>
+Layanan ini memotong saldo Anda sebesar <b>Rp ${session.hourly_rate.toLocaleString('id-ID')} setiap jam</b>.
+
+Dengan menekan tombol "Hentikan", akun ini akan langsung <b>dihapus dari server</b> dan tidak akan ada lagi pemotongan saldo per jam.
+──────────────────────
+Apakah Anda yakin ingin melanjutkan?
+        `;
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '✅ Ya, Hentikan Layanan Ini', callback_data: `stop_payg_execute_${sessionId}` }],
+                    [{ text: '❌ Batal', callback_data: 'my_accounts_list' }]
+                ]
+            }
+        });
+    } catch (e) {
+        console.error("Error di manage_account_payg:", e);
+        await ctx.answerCbQuery(e.message, { show_alert: true });
+    }
+});
+
+// 4. Handler Eksekusi Hapus & Refund (sudah di-refactor menjadi stateless)
+bot.action(/delete_refund_confirm_(\d+)/, async (ctx) => {
+    const accountId = parseInt(ctx.match[1]);
+    const userId = ctx.from.id; 
+    
     await ctx.editMessageText("⏳ Menghapus akun di server dan memproses refund, mohon tunggu...");
 
     try {
-        // Ambil info lengkap akun yang akan dihapus untuk notifikasi dan penyesuaian kuota
-        const acc = await new Promise((resolve, reject) => {
+        // Ambil semua data yang dibutuhkan dalam satu query
+        const data = await new Promise((resolve, reject) => {
             const query = `
-                SELECT ca.*, s.nama_server FROM created_accounts ca
+                SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, u.role
+                FROM created_accounts ca 
                 JOIN Server s ON ca.server_id = s.id
-                WHERE ca.id = ?`;
-            db.get(query, [accountId], (err, row) => (err || !row) ? reject(new Error("Akun tidak ditemukan lagi di DB.")) : resolve(row));
+                JOIN users u ON ca.created_by_user_id = u.user_id
+                WHERE ca.id = ? AND ca.created_by_user_id = ?`;
+            db.get(query, [accountId, userId], (err, row) => err || !row ? reject(new Error("Akun tidak ditemukan atau bukan milik Anda.")) : resolve(row));
         });
 
-        // 1. Panggil API untuk hapus akun di server
-        await callDeleteAPI(acc.protocol, acc.account_username, acc.server_id);
+        // Hitung ulang refund untuk keamanan
+        const hargaPerHari = data.role === 'reseller' ? data.harga_reseller : data.harga;
+        const totalHargaAwal = calculatePrice(hargaPerHari, data.duration_days);
+        const hariTerpakai = Math.ceil((new Date().getTime() - new Date(data.creation_date).getTime()) / (1000 * 60 * 60 * 24)) || 1;
+        const biayaTerpakai = hariTerpakai * hargaPerHari;
+        let refundAmount = Math.floor((totalHargaAwal - biayaTerpakai) / 100) * 100;
+        if (refundAmount < 0) refundAmount = 0;
+
+        // Proses penghapusan
+        await callDeleteAPI(data.protocol, data.account_username, data.server_id);
         
-        // 2. Jika di server sukses, proses di database bot dalam satu transaksi
         await new Promise((resolve, reject) => {
             db.serialize(() => {
                 db.run("BEGIN TRANSACTION;");
-                
-                // Kembalikan saldo ke pengguna yang menghapus
-                db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [refundAmount, userId]);
-                
-                // Kurangi slot server
-                db.run("UPDATE Server SET total_create_akun = total_create_akun - 1 WHERE id = ? AND total_create_akun > 0", [acc.server_id]);
-                
-                // Hapus data akun
+                if (refundAmount > 0) {
+                    db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [refundAmount, userId]);
+                }
+                db.run("UPDATE Server SET total_create_akun = total_create_akun - 1 WHERE id = ? AND total_create_akun > 0", [data.server_id]);
                 db.run("DELETE FROM created_accounts WHERE id = ?", [accountId], async function(err) {
-                    if (err) return; // Jika gagal, akan di-rollback di bawah
-                    
-                    // PENYESUAIAN KUOTA RESELLER DIPANGGIL DI SINI
-                    // Ini dijalankan setelah delete berhasil tapi sebelum commit
-                    await adjustResellerQuotaOnDelete(acc);
+                    if (err) return; 
+                    await adjustResellerQuotaOnDelete(data);
                 });
-
-                db.run("COMMIT;", (err) => {
-                    if (err) {
-                        console.error("Gagal commit transaksi delete & refund:", err);
-                        db.run("ROLLBACK;");
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                });
+                db.run("COMMIT;", (err) => err ? reject(err) : resolve());
             });
         });
 
-        await ctx.editMessageText(`✅ Akun <b>${acc.account_username}</b> berhasil dihapus.\nSaldo sebesar <b>Rp ${refundAmount.toLocaleString('id-ID')}</b> telah dikembalikan.`, {
+        await ctx.editMessageText(`✅ Akun <b>${data.account_username}</b> berhasil dihapus.\nSaldo sebesar <b>Rp ${refundAmount.toLocaleString('id-ID')}</b> telah dikembalikan.`, {
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]] }
         });
 
-        // Panggil FUNGSI NOTIFIKASI BARU DI SINI
-        await sendDeleteRefundNotification(userId, acc, refundAmount);
+        await sendDeleteRefundNotification(userId, data, refundAmount);
 
     } catch (error) {
         console.error("Error saat eksekusi hapus & refund:", error);
         await ctx.editMessageText(`🚫 Gagal: ${error.message}`, {
-             reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts' }]] }
+             reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts_list' }]] }
         });
     }
+});
+
+// 5. Handler Eksekusi Hentikan Layanan PAYG (sudah baik, hanya dipastikan lagi)
+bot.action(/stop_payg_execute_(\d+)/, async (ctx) => {
+    const sessionId = parseInt(ctx.match[1]);
+    await ctx.editMessageText("⏳ Memproses penghentian layanan...");
+    const success = await stopPaygSession(sessionId, 'Dihentikan oleh pengguna');
+    
+    // Hapus pesan "memproses..." sebelum kembali ke menu utama
+    try { await ctx.deleteMessage(); } catch(e){}
+    
+    if (!success) {
+        await ctx.reply("Gagal menghentikan layanan. Silakan hubungi admin.");
+    }
+    
+    // Fungsi stopPaygSession sudah mengirim notifikasi, jadi kita langsung kembali ke menu utama
+    await sendMainMenu(ctx);
 });
 
 bot.action('admin_examples', async (ctx) => {
@@ -4261,105 +4415,116 @@ bot.action('panel_server_start', async (ctx) => {
   await startSelectServerForAction(ctx, 0);
 });
 async function startSelectServerForAction(ctx, page = 0) {
-  try {
-    const userId = ctx.from.id;
-    const servers = await getServerList(userId); // Pastikan getServerList terdefinisi
+    try {
+        const userId = ctx.from.id;
+        const servers = await getServerList(userId);
 
-    const messageOptions = {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [] }
-    };
+        const messageOptions = {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [] }
+        };
 
-    if (servers.length === 0) {
-      messageOptions.reply_markup.inline_keyboard.push([{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]);
-      const noServerMsg = '⚠️ Tidak ada server yang tersedia saat ini.';
-      // Coba edit dulu, jika gagal (misal pesan tidak ada), kirim baru
-      try {
-        if (ctx.callbackQuery) await ctx.editMessageText(noServerMsg, messageOptions);
-        else await ctx.reply(noServerMsg, messageOptions);
-      } catch (e) {
-        await ctx.reply(noServerMsg, messageOptions);
-      }
-      return;
+        if (servers.length === 0) {
+            messageOptions.reply_markup.inline_keyboard.push([{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]);
+            const noServerMsg = '⚠️ Tidak ada server yang tersedia saat ini.';
+            try {
+                if (ctx.callbackQuery) await ctx.editMessageText(noServerMsg, messageOptions);
+                else await ctx.reply(noServerMsg, messageOptions);
+            } catch (e) {
+                await ctx.reply(noServerMsg, messageOptions);
+            }
+            return;
+        }
+
+        const serversPerPage = 3;
+        const totalPages = Math.ceil(servers.length / serversPerPage);
+        const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
+        const currentServers = servers.slice(currentPage * serversPerPage, (currentPage + 1) * serversPerPage);
+
+        const keyboardRows = [];
+        for (let i = 0; i < currentServers.length; i += 2) {
+            const row = [];
+            const server1 = currentServers[i];
+            const server2 = currentServers[i + 1];
+            row.push({ text: `${server1.nama_server}`, callback_data: `server_selected_for_action_${server1.id}` });
+            if (server2) {
+                row.push({ text: `${server2.nama_server}`, callback_data: `server_selected_for_action_${server2.id}` });
+            }
+            keyboardRows.push(row);
+        }
+
+        const navButtons = [];
+        if (totalPages > 1) {
+            if (currentPage > 0) {
+                navButtons.push({ text: '⬅️ Back', callback_data: `panel_server_page_${currentPage - 1}` });
+            }
+            if (currentPage < totalPages - 1) {
+                navButtons.push({ text: '➡️ Next', callback_data: `panel_server_page_${currentPage + 1}` });
+            }
+        }
+
+        if (navButtons.length > 0) {
+            keyboardRows.push(navButtons);
+        }
+        keyboardRows.push([{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]);
+        messageOptions.reply_markup.inline_keyboard = keyboardRows;
+
+        // =======================================================
+        // ==> MODIFIKASI DIMULAI DI SINI <==
+        // =======================================================
+        let messageText = `<code><b>══════════════════════════════</b></code>\n  <code>   <b>PANEL PREMIUM RYYSTORE</b></code>\n<code><b>══════════════════════════════</b></code>\n📌 <code><b>PILIH SERVER (Hal ${currentPage + 1}/${totalPages})</b></code>\n\n<pre>`;
+        currentServers.forEach((server) => {
+            const hargaPer30Hari = calculatePrice(server.harga, 30);
+            
+            // BARIS BARU: Hitung harga per jam dari harga harian
+            const hargaPerJam = Math.ceil(server.harga / 24); 
+
+            const status = server.total_create_akun >= server.batas_create_akun ? '❌ PENUH' : '✅ TERSEDIA';
+            
+            messageText += `🚀 ${server.nama_server}\n`;
+            messageText += `💰 HARGA/HARI : Rp${server.harga.toLocaleString('id-ID')}\n`;
+            messageText += `🗓️ 30 HARI   : Rp${hargaPer30Hari.toLocaleString('id-ID')}\n`;
+            
+            // BARIS BARU: Tampilkan harga per jam untuk PAYG
+            messageText += `⏱️ PAYG/JAM  : Rp${hargaPerJam.toLocaleString('id-ID')}\n`; 
+            
+            messageText += `📦 KUOTA     : ${server.quota}GB\n`;
+            messageText += `🔒 IP LIMIT  : ${server.iplimit}\n`;
+            messageText += `👤 PENGGUNA  : ${server.total_create_akun}/${server.batas_create_akun} ${status}\n`;
+            messageText += '─'.repeat(30) + '\n';
+        });
+        messageText += '</pre>\nSilakan pilih server:';
+        // =======================================================
+        // ==> MODIFIKASI BERAKHIR DI SINI <==
+        // =======================================================
+
+        let sentMessageInfo;
+        if (ctx.callbackQuery) {
+            try {
+                sentMessageInfo = await ctx.editMessageText(messageText, messageOptions);
+            } catch (e) {
+                console.warn("Gagal editMessageText di startSelectServerForAction, mengirim pesan baru.", e.message);
+                delete userState[userId];
+                if (userMessages[userId]) { try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); } catch (delErr) {} }
+                sentMessageInfo = await ctx.reply(messageText, messageOptions);
+            }
+        } else {
+            if (userMessages[userId]) {
+                try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); } catch (e) {}
+            }
+            sentMessageInfo = await ctx.reply(messageText, messageOptions);
+        }
+
+        if (sentMessageInfo) {
+            userMessages[userId] = sentMessageInfo.message_id || (sentMessageInfo.result && sentMessageInfo.result.message_id);
+        }
+        userState[userId] = { ...userState[userId], step: 'selecting_server_for_action', currentPage: currentPage };
+
+    } catch (error) {
+        console.error('Error di startSelectServerForAction:', error);
+        delete userState[userId];
+        await ctx.reply('⚠️ Terjadi kesalahan fatal. Silakan coba /menu lagi.', { parse_mode: 'Markdown' });
     }
-
-    const serversPerPage = 3;
-    const totalPages = Math.ceil(servers.length / serversPerPage);
-    const currentPage = Math.min(Math.max(page, 0), totalPages - 1); // Halaman saat ini, pastikan valid
-    const currentServers = servers.slice(currentPage * serversPerPage, (currentPage + 1) * serversPerPage);
-
-    const keyboardRows = [];
-    for (let i = 0; i < currentServers.length; i += 2) {
-      const row = [];
-      const server1 = currentServers[i];
-      const server2 = currentServers[i + 1];
-      row.push({ text: `${server1.nama_server}`, callback_data: `server_selected_for_action_${server1.id}` });
-      if (server2) {
-        row.push({ text: `${server2.nama_server}`, callback_data: `server_selected_for_action_${server2.id}` });
-      }
-      keyboardRows.push(row);
-    }
-
-    const navButtons = [];
-    // Perhatikan callback_data untuk navigasi di sini: 'panel_server_page_NOMORHALAMAN'
-    if (totalPages > 1) {
-      if (currentPage > 0) {
-        navButtons.push({ text: '⬅️ Back', callback_data: `panel_server_page_${currentPage - 1}` });
-      }
-      if (currentPage < totalPages - 1) {
-        navButtons.push({ text: '➡️ Next', callback_data: `panel_server_page_${currentPage + 1}` });
-      }
-    }
-
-    if (navButtons.length > 0) {
-      keyboardRows.push(navButtons);
-    }
-    keyboardRows.push([{ text: '🔙 Kembali ke Menu', callback_data: 'kembali' }]);
-    messageOptions.reply_markup.inline_keyboard = keyboardRows;
-
-    let messageText = `<code><b>══════════════════════════════</b></code>\n  <code>   <b>PANEL PREMIUM RYYSTORE</b></code>\n<code><b>══════════════════════════════</b></code>\n📌 <code><b>PILIH SERVER (Hal ${currentPage + 1}/${totalPages})</b></code>\n\n<pre>`;
-    currentServers.forEach((server) => {
-      const hargaPer30Hari = calculatePrice(server.harga, 30); 
-      const status = server.total_create_akun >= server.batas_create_akun ? '❌ PENUH' : '✅ TERSEDIA';
-      messageText += `🚀 ${server.nama_server}\n`;
-      messageText += `💰 HARGA     : Rp${server.harga}/hari\n`;
-      messageText += `🗓️ 30 HARI   : Rp${hargaPer30Hari.toLocaleString('id-ID')}\n`;
-      messageText += `📦 QUOTA     : ${server.quota}GB\n`;
-      messageText += `🔒 IP LIMIT  : ${server.iplimit}\n`;
-      messageText += `👤 PENGGUNA  : ${server.total_create_akun}/${server.batas_create_akun} ${status}\n`;
-      messageText += '─'.repeat(30) + '\n';
-    });
-    messageText += '</pre>\nSilakan pilih server:';
-
-    let sentMessageInfo;
-    if (ctx.callbackQuery) { // Jika dipanggil dari callback (navigasi atau kembali dari protokol)
-      try {
-        sentMessageInfo = await ctx.editMessageText(messageText, messageOptions);
-      } catch (e) { // Gagal edit, mungkin pesan sudah lama atau tidak ada
-        console.warn("Gagal editMessageText di startSelectServerForAction, mengirim pesan baru.", e.message);
-        // Hapus state lama agar tidak terjebak jika ada
-        delete userState[userId]; 
-        if (userMessages[userId]) { try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); } catch(delErr){} }
-        sentMessageInfo = await ctx.reply(messageText, messageOptions);
-      }
-    } else { // Panggilan pertama dari panel_server_start
-      if (userMessages[userId]) { // Hapus pesan menu utama sebelumnya
-          try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); } catch(e){}
-      }
-      sentMessageInfo = await ctx.reply(messageText, messageOptions);
-    }
-
-    if (sentMessageInfo) { 
-        userMessages[userId] = sentMessageInfo.message_id || (sentMessageInfo.result && sentMessageInfo.result.message_id);
-    }
-     userState[userId] = { ...userState[userId], step: 'selecting_server_for_action', currentPage: currentPage };
-
-
-  } catch (error) {
-    console.error('Error di startSelectServerForAction:', error);
-    delete userState[userId]; // Hapus state jika error
-    await ctx.reply('⚠️ Terjadi kesalahan fatal. Silakan coba /menu lagi.', { parse_mode: 'Markdown' });
-  }
 }
 
 bot.action(/panel_server_page_(\d+)/, async (ctx) => {
@@ -4381,66 +4546,48 @@ bot.action(/navigate_server_selection_(\d+)/, async (ctx) => {
   const page = parseInt(ctx.match[1], 10);
   await startSelectServerForAction(ctx, page);
 });
+
 bot.action(/server_selected_for_action_(.+)/, async (ctx) => {
-  const serverId = ctx.match[1];
-  const userId = ctx.from.id;
+    const serverId = ctx.match[1];
+    const userId = ctx.from.id;
 
-  if (!userState[userId]) userState[userId] = {};
-  userState[userId].serverId = serverId;
-  userState[userId].step = 'selecting_protocol_for_action'; 
+    if (!userState[userId]) userState[userId] = {};
+    userState[userId].serverId = serverId;
+    userState[userId].step = 'selecting_protocol_for_action'; 
 
-  try {
-    const userDbData = await new Promise((resolve, reject) => {
-      db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row || { saldo: 0, role: 'member' });
-      });
-    });
+    try {
+        const userDbData = await new Promise((resolve, reject) => {
+            db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row || { saldo: 0, role: 'member' });
+            });
+        });
 
-    const serverDetails = await new Promise((resolve, reject) => {
-      db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+        const serverDetails = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, row) => {
+                if (err) reject(err);
+                else if (!row) reject(new Error("Server tidak ditemukan"));
+                else resolve(row);
+            });
+        });
 
-    if (!serverDetails) {
-      await ctx.editMessageText("⚠️ Server tidak ditemukan.", { 
-        parse_mode: 'Markdown', 
-        reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]] } 
-      });
-      return;
-    }
+        const role = userDbData.role;
+        const hargaPerHari = role === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
+        const hargaBulanan = calculatePrice(hargaPerHari, 30);
+        // ==> HITUNG HARGA PER JAM DI SINI <==
+        const hargaPerJam = Math.ceil(hargaPerHari / 24);
 
-    const role = userDbData.role; // Menggunakan userDbData untuk role
-    const hargaPerHari = role === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
-    const hargaBulanan = calculatePrice(hargaPerHari, 30); 
+        const displayName = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || `User ${userId}`);
+        const userClickableDisplay = `<a href="tg://user?id=${userId}">${escapeHtml(displayName)}</a>`;
+        const userSaldoFormatted = userDbData.saldo.toLocaleString('id-ID');
+        
+        let city = 'Unknown';
+        const serverNameLower = serverDetails.nama_server.toLowerCase();
+        if (serverNameLower.includes('sg')) city = 'Singapore 🇸🇬';
+        else if (serverNameLower.includes('id')) city = 'Indonesia 🇮🇩';
+        else if (serverNameLower.includes('us')) city = 'United States 🇺🇸';
 
-    // Logika baru untuk menampilkan nama pengguna
-    let displayName;
-    if (ctx.from.username) {
-        displayName = ctx.from.username; // Username tanpa "@"
-    } else if (ctx.from.first_name) {
-        displayName = ctx.from.first_name;
-    } else {
-        displayName = `User ${userId}`; // Fallback jika tidak ada username atau nama depan
-    }
-    // Membuat nama yang bisa diklik
-    const userClickableDisplay = `<a href="tg://user?id=${userId}">${displayName}</a>`;
-    
-    const userSaldoFormatted = userDbData.saldo.toLocaleString('id-ID'); // Menggunakan userDbData untuk saldo
-
-    let city = 'Unknown';
-    const serverNameLower = serverDetails.nama_server.toLowerCase();
-    if (serverNameLower.includes('sg') || serverNameLower.includes('singapore')) {
-        city = 'Singapore 🇸🇬';
-    } else if (serverNameLower.includes('id') || serverNameLower.includes('indo') || serverNameLower.includes('indonesia')) {
-        city = 'Indonesia 🇮🇩';
-    } else if (serverNameLower.includes('us')) {
-        city = 'United States 🇺🇸';
-    }
-
-    let message = `
+        let message = `
 <b>╔═════════════════════╗</b>
   <code><b>  PANEL PILIH PROTOKOL</b></code>
 <b>╚═════════════════════╝</b>
@@ -4457,36 +4604,38 @@ bot.action(/server_selected_for_action_(.+)/, async (ctx) => {
 <code><b>DAFTAR HARGA (${role === 'reseller' ? 'Reseller' : 'Member'})</b></code>
 <b>─────────────────────</b>`;
 
-    const protocols = ['SSH', 'VMESS', 'VLESS', 'TROJAN'];
-    protocols.forEach(p => {
-        message += `\n<blockquote><b>${p.toUpperCase()}</b></blockquote>`;
-        message += `  • Harian  : <code>Rp${hargaPerHari.toLocaleString('id-ID')}</code>\n`;
-        message += `  • Bulanan : <code>Rp${hargaBulanan.toLocaleString('id-ID')}</code>`;
-    });
-    
-    message += `
+        // --- MODIFIKASI TAMPILAN HARGA ---
+        const protocols = ['SSH', 'VMESS', 'VLESS', 'TROJAN'];
+        protocols.forEach(p => {
+            message += `\n<blockquote><b>${p.toUpperCase()}</b></blockquote>`;
+            message += `  • Per Jam  : <code>Rp${hargaPerJam.toLocaleString('id-ID')}</code> (PAYG)\n`;
+            message += `  • Harian   : <code>Rp${hargaPerHari.toLocaleString('id-ID')}</code>\n`;
+            message += `  • Bulanan  : <code>Rp${hargaBulanan.toLocaleString('id-ID')}</code>`;
+        });
+        // --- AKHIR MODIFIKASI ---
+        
+        message += `
 <b>─────────────────────</b>
 Silakan pilih jenis protokol layanan:`;
 
-    const keyboard = [
-      [{ text: 'SSH', callback_data: `protocol_selected_for_action_ssh` }, { text: 'VMESS', callback_data: `protocol_selected_for_action_vmess` }],
-      [{ text: 'VLESS', callback_data: `protocol_selected_for_action_vless` }, { text: 'TROJAN', callback_data: `protocol_selected_for_action_trojan` }],
-      [{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]
-    ];
+        const keyboard = [
+            [{ text: 'SSH', callback_data: `protocol_selected_for_action_ssh` }, { text: 'VMESS', callback_data: `protocol_selected_for_action_vmess` }],
+            [{ text: 'VLESS', callback_data: `protocol_selected_for_action_vless` }, { text: 'TROJAN', callback_data: `protocol_selected_for_action_trojan` }],
+            [{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]
+        ];
 
-    await ctx.editMessageText(message, { 
-      parse_mode: 'HTML', 
-      reply_markup: { inline_keyboard: keyboard },
-      disable_web_page_preview: true
-    });
+        await ctx.editMessageText(message, { 
+            parse_mode: 'HTML', 
+            reply_markup: { inline_keyboard: keyboard },
+            disable_web_page_preview: true
+        });
 
-  } catch (error) {
-    console.error('Error di server_selected_for_action (pemilihan protokol):', error);
-    await ctx.editMessageText("⚠️ Terjadi kesalahan saat menampilkan detail server dan protokol. Silakan coba lagi.", {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]] }
-    });
-  }
+    } catch (error) {
+        console.error('Error di server_selected_for_action:', error);
+        await ctx.editMessageText("⚠️ Terjadi kesalahan saat menampilkan detail server. Silakan coba lagi.", {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]] }
+        });
+    }
 });
 
 // GANTI handler lama Anda dengan yang ini
@@ -4495,80 +4644,64 @@ bot.action(/protocol_selected_for_action_(ssh|vmess|vless|trojan)/, async (ctx) 
     const userId = ctx.from.id;
 
     if (!userState[userId] || !userState[userId].serverId) {
-        await ctx.editMessageText("⚠️ Sesi Anda tidak valid atau server belum dipilih. Silakan ulangi dari awal.", {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: '🔙 Menu Utama', callback_data: 'kembali' }]] }
-        });
-        return;
+        return ctx.answerCbQuery('⚠️ Sesi tidak valid. Ulangi dari awal.', { show_alert: true });
     }
 
     const serverId = userState[userId].serverId;
     userState[userId].protocol = protocol;
-    userState[userId].step = 'choosing_final_action_create_or_trial_or_renew'; // Step diubah
+    userState[userId].step = 'choosing_final_action';
 
     try {
         const user = await new Promise((resolve, reject) => {
-            db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row || { saldo: 0, role: 'member' });
-            });
+            db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => err ? reject(err) : resolve(row || { saldo: 0, role: 'member' }));
         });
 
         const serverDetails = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
+            db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, row) => err ? reject(err) : resolve(row));
         });
 
         if (!serverDetails) {
-            await ctx.editMessageText("⚠️ Server tidak ditemukan.", {
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]] }
-            });
-            return;
+            return ctx.editMessageText("⚠️ Server tidak ditemukan.", { reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'panel_server_start' }]] } });
         }
 
         const role = user.role;
         const hargaPerHari = role === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
         const hargaBulanan = calculatePrice(hargaPerHari, 30);
+        // ==> HITUNG HARGA PER JAM DI SINI <==
+        const hargaPerJam = Math.ceil(hargaPerHari / 24);
 
         let city = 'Unknown';
         const serverNameLower = serverDetails.nama_server.toLowerCase();
-        if (serverNameLower.includes('sg') || serverNameLower.includes('singapore')) {
-            city = 'Singapore 🇸🇬';
-        } else if (serverNameLower.includes('id') || serverNameLower.includes('indo') || serverNameLower.includes('indonesia')) {
-            city = 'Indonesia 🇮🇩';
-        } else if (serverNameLower.includes('us')) {
-            city = 'United States 🇺🇸';
-        }
+        if (serverNameLower.includes('sg')) city = 'Singapore 🇸🇬';
+        else if (serverNameLower.includes('id')) city = 'Indonesia 🇮🇩';
+        else if (serverNameLower.includes('us')) city = 'United States 🇺🇸';
 
-        const saldoFormatted = user.saldo.toLocaleString('id-ID');
-        const protocolUpperCase = protocol.toUpperCase();
-
+        // --- MODIFIKASI TAMPILAN HARGA ---
         const messageText = `
-<b>PANEL KONFIRMASI ${protocolUpperCase}</b>
+<b>PANEL KONFIRMASI ${protocol.toUpperCase()}</b>
 ──────────────────────
 Chat ID : <code>${userId}</code>
-Saldo   : <code>Rp${saldoFormatted}</code>
+Saldo   : <code>Rp${user.saldo.toLocaleString('id-ID')}</code>
 ──────────────────────
 Server  : <code>${serverDetails.nama_server}</code>
 Kota    : <code>${city}</code>
 Kuota   : <code>${serverDetails.quota} GB</code>
 IP Limit: <code>${serverDetails.iplimit}</code>
 ──────────────────────
-  HARGA ${protocolUpperCase} ${role === 'reseller' ? 'Reseller' : 'Member'}
-  Harian  : <code>Rp${hargaPerHari.toLocaleString('id-ID')}</code>
-  Bulanan : <code>Rp${hargaBulanan.toLocaleString('id-ID')}</code>
+  HARGA ${protocol.toUpperCase()} (${role === 'reseller' ? 'Reseller' : 'Member'})
+  Per Jam  : <code>Rp${hargaPerJam.toLocaleString('id-ID')}</code> (PAYG)
+  Harian   : <code>Rp${hargaPerHari.toLocaleString('id-ID')}</code>
+  Bulanan  : <code>Rp${hargaBulanan.toLocaleString('id-ID')}</code>
 ──────────────────────
-<i>Premium Panel ${protocolUpperCase} ${NAMA_STORE}</i>
+<i>Premium Panel ${protocol.toUpperCase()} ${NAMA_STORE}</i>
 ──────────────────────
 Silakan pilih aksi Anda:`;
+        // --- AKHIR MODIFIKASI ---
 
+        // Di keyboard, kita ubah callback untuk PAYG agar menampilkan info dulu
         const keyboard = [
-            // BARIS INI YANG DIUBAH
             [{ text: 'BUAT AKUN', callback_data: 'action_do_create_final' }, { text: 'RENEW AKUN', callback_data: 'action_do_renew_start' }],
-            [{ text: 'TRIAL AKUN', callback_data: 'action_do_trial_final' }],
+            [{ text: '⏱️ PAY AS YOU GO', callback_data: 'payg_info_confirm' }, { text: 'TRIAL AKUN', callback_data: 'action_do_trial_final' }], // Diubah ke payg_info_confirm
             [{ text: '🔙 Kembali Pilih Protokol', callback_data: `server_selected_for_action_${serverId}` }]
         ];
 
@@ -4579,11 +4712,176 @@ Silakan pilih aksi Anda:`;
         });
 
     } catch (error) {
-        console.error('Error di protocol_selected_for_action (pemilihan aksi):', error);
+        console.error('Error di protocol_selected_for_action:', error);
         await ctx.editMessageText("⚠️ Terjadi kesalahan saat memproses. Silakan coba lagi.", {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]] }
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'panel_server_start' }]] }
         });
+    }
+});
+
+bot.action('action_do_payg_final', async (ctx) => {
+    const userId = ctx.from.id;
+    if (!userState[userId] || !userState[userId].serverId || !userState[userId].protocol) {
+        return ctx.answerCbQuery('⚠️ Sesi tidak valid. Ulangi dari awal.', { show_alert: true });
+    }
+
+    const { protocol } = userState[userId];
+    userState[userId].action = 'payg';
+    userState[userId].type = protocol;
+    userState[userId].step = `username_payg_${protocol}`;
+    
+    await ctx.answerCbQuery();
+    try { await ctx.deleteMessage(); } catch(e) {}
+
+    const promptMsg = await ctx.reply('👤 *Masukkan username untuk layanan Pay-As-You-Go:*', { parse_mode: 'Markdown' });
+    if(userState[userId]) userState[userId].lastBotMessageId = promptMsg.message_id;
+});
+
+async function processFinalPaygCreation(ctx) {
+    const userId = ctx.from.id;
+    const state = userState[userId];
+
+    if (!state || state.action !== 'payg' || !state.type || !state.serverId || !state.username || (state.type === 'ssh' && !state.password) ) {
+        console.error("State PAYG tidak lengkap untuk kreasi final:", state);
+        if (state) delete userState[userId];
+        await ctx.reply("⚠️ Sesi error. Ulangi dari /menu.", { parse_mode: 'Markdown' });
+        return sendMainMenu(ctx);
+    }
+
+    const { username, password, serverId, type } = state;
+    let loadingMessage;
+
+    try {
+        loadingMessage = await ctx.reply('⏳ Validasi data & persiapan akun PAYG...');
+
+        const server = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, row) => {
+                if (err) reject(new Error("Gagal ambil detail server."));
+                else if (!row) reject(new Error("Server tidak ditemukan."));
+                else resolve(row);
+            });
+        });
+
+        if (server.total_create_akun >= server.batas_create_akun) {
+            throw new Error(`Server ${escapeHtml(server.nama_server)} penuh.`);
+        }
+
+        const user = await new Promise((resolve, reject) => {
+            db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
+                if (err) reject(new Error("Gagal ambil data user."));
+                else if (!row) reject(new Error("User tidak ditemukan."));
+                else resolve(row);
+            });
+        });
+
+        const hargaPerHari = user.role === 'reseller' ? server.harga_reseller : server.harga;
+        const hourlyRate = Math.ceil(hargaPerHari / 24);
+
+        if (user.saldo < hourlyRate + PAYG_MINIMUM_BALANCE_THRESHOLD) {
+            throw new Error(`Saldo tidak cukup. Dibutuhkan min. Rp${(hourlyRate + PAYG_MINIMUM_BALANCE_THRESHOLD).toLocaleString('id-ID')} untuk memulai. Saldo Anda: Rp${user.saldo.toLocaleString('id-ID')}.`);
+        }
+        
+        await callTelegramApiWithRetry(() => ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, '⏳ Mengurangi saldo & menghubungi server...'));
+
+        const longExpiryDays = 3650; // Masa aktif "dummy" yang sangat panjang
+        let accountDetailsMsg;
+        const createFn = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan }[type];
+        
+        // =======================================================
+        // ==> INI BAGIAN PENTINGNYA <==
+        // Kita menambahkan 'true' sebagai argumen terakhir untuk menandakan ini adalah PAYG
+        // =======================================================
+        if (type === 'ssh') {
+            accountDetailsMsg = await createFn(username, password, longExpiryDays, server.iplimit, serverId, true);
+        } else {
+            accountDetailsMsg = await createFn(username, longExpiryDays, server.quota, server.iplimit, serverId, true);
+        }
+        // =======================================================
+
+        if (!accountDetailsMsg || (typeof accountDetailsMsg === 'string' && accountDetailsMsg.toLowerCase().includes('gagal'))) {
+             throw new Error(accountDetailsMsg || "Gagal membuat akun di panel server.");
+        }
+
+        const nowISO = new Date().toISOString();
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.run("BEGIN TRANSACTION;");
+                db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [hourlyRate, userId], (err) => { if(err) return db.run("ROLLBACK;", () => reject(err)); });
+                db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => { if(err) return db.run("ROLLBACK;", () => reject(err)); });
+                db.run('INSERT INTO payg_sessions (user_id, server_id, account_username, protocol, hourly_rate, last_billed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [userId, serverId, username, type, hourlyRate, nowISO, nowISO], (err) => { if(err) return db.run("ROLLBACK;", () => reject(err)); });
+                db.run("COMMIT;", (err) => err ? reject(err) : resolve());
+            });
+        });
+
+        await callTelegramApiWithRetry(() => ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id));
+        
+        await sendPaygPurchaseNotification(userId, username, type, server.nama_server, hourlyRate);
+
+        await ctx.reply(accountDetailsMsg, { parse_mode: 'Markdown' });
+        await ctx.replyWithMarkdown(`✅ Layanan *Pay-As-You-Go* untuk akun *${escapeHtml(username)}* telah aktif!\n\nBiaya: *Rp${hourlyRate.toLocaleString('id-ID')} per jam*.\nTagihan pertama telah dibayar. Saldo Anda akan dipotong otomatis setiap jam.\n\nAnda dapat menghentikan layanan ini di menu "Kelola Akun".`);
+
+    } catch (error) {
+        console.error('Error pada alur pembuatan akun PAYG:', error.message);
+         if (loadingMessage) {
+            try { await callTelegramApiWithRetry(() => ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, `🚫 Gagal: ${error.message}`)); }
+            catch (editError) { await ctx.reply(`🚫 Gagal: ${error.message}`); }
+        } else {
+            await ctx.reply(`🚫 Gagal: ${error.message}`);
+        }
+    } finally {
+        if (userState[userId]) delete userState[userId];
+        await sendMainMenu(ctx);
+    }
+}
+
+// Handler baru untuk menampilkan informasi tentang PAYG sebelum membuat akun
+bot.action('payg_info_confirm', async (ctx) => {
+    const userId = ctx.from.id;
+    if (!userState[userId] || !userState[userId].serverId || !userState[userId].protocol) {
+        return ctx.answerCbQuery('⚠️ Sesi tidak valid. Ulangi dari awal.', { show_alert: true });
+    }
+
+    const { serverId, protocol } = userState[userId];
+
+    try {
+        const server = await new Promise((resolve, reject) => {
+            db.get('SELECT harga, harga_reseller FROM Server WHERE id = ?', [serverId], (err, row) => err || !row ? reject(new Error("Server Error")) : resolve(row));
+        });
+        const user = await new Promise((resolve, reject) => {
+            db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => err || !row ? reject(new Error("User Error")) : resolve(row));
+        });
+
+        const hargaPerHari = user.role === 'reseller' ? server.harga_reseller : server.harga;
+        const hourlyRate = Math.ceil(hargaPerHari / 24);
+
+        const message = `
+⏱️ <b>Konfirmasi Layanan Pay As You Go</b> ⏱️
+──────────────────────
+Anda akan membuat akun dengan sistem bayar per pemakaian (per jam).
+
+<b>💡 Konsep Pay As You Go:</b>
+<b>1. Biaya per Jam:</b> Saldo Anda akan dipotong sebesar <b>Rp ${hourlyRate.toLocaleString('id-ID')}</b> setiap jam.
+<b>2. Tanpa Masa Aktif:</b> Akun akan terus aktif selama saldo Anda mencukupi.
+<b>3. Penghentian Otomatis:</b> Layanan akan berhenti dan akun terhapus jika saldo Anda kurang dari Rp 200.
+<b>4. Fleksibel:</b> Anda bisa menghentikan layanan kapan saja melalui menu "Kelola Akun".
+
+Saldo akan langsung dipotong untuk 1 jam pertama saat akun dibuat. Pastikan Anda memahami sistem ini sebelum melanjutkan.
+`;
+
+        const keyboard = [
+            [{ text: '✅ Lanjutkan & Buat Akun PAYG', callback_data: 'action_do_payg_final' }],
+            [{ text: '❌ Batal, Kembali', callback_data: `protocol_selected_for_action_${protocol}` }]
+        ];
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+
+    } catch (error) {
+        console.error("Error menampilkan info PAYG:", error);
+        await ctx.answerCbQuery("⚠️ Terjadi kesalahan, silakan coba lagi.", { show_alert: true });
     }
 });
 
@@ -5556,6 +5854,9 @@ bot.on('text', async (ctx) => {
         return;
     }
 
+    // ==========================================================
+    // ALUR 1: TOP UP SALDO
+    // ==========================================================
     if (state.step === 'topup_enter_amount') {
         const amountText = ctx.message.text.trim();
         let userTypedAmountMessageId = ctx.message.message_id;
@@ -5660,6 +5961,10 @@ Silakan scan QRIS untuk top up.`;
             return sendMainMenu(ctx);
         }
     }
+    
+    // ==========================================================
+    // ALUR 2: PEMBUATAN AKUN BERLANGGANAN (FIXED-TERM)
+    // ==========================================================
     else if (state.step && state.step.startsWith('username_create_')) {
         if (!state.action || state.action !== 'create' || !state.type || !state.serverId) {
             console.error("State tidak lengkap atau salah untuk input username (create flow):", state);
@@ -5925,147 +6230,201 @@ Silakan scan QRIS untuk top up.`;
         }
     }
     
-    // =========================================================================
-    // ||                  BLOK BARU UNTUK PROSES RENEW                       ||
-    // =========================================================================
-    // GANTI KESELURUHAN BLOK 'exp_renew_' ANDA DENGAN VERSI FINAL INI
-else if (state.step && state.step.startsWith('exp_renew_')) {
-    if (!state.action || state.action !== 'renew' || !state.type || !state.serverId || !state.username) {
-        console.error("State tidak lengkap untuk perpanjangan:", state);
-        delete userState[userId];
-        await ctx.reply("⚠️ Terjadi kesalahan sesi perpanjangan. Ulangi dari awal.");
-        return sendMainMenu(ctx);
-    }
-
-    const expInput = ctx.message.text.trim();
-    const botExpPromptId = userState[userId]?.lastBotMessageId;
-    if (botExpPromptId) {
-        try { await ctx.telegram.deleteMessage(ctx.chat.id, botExpPromptId); } catch (e) {}
-        if (userState[userId]) userState[userId].lastBotMessageId = null;
-    }
-    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
-
-    if (!/^\d+$/.test(expInput) || parseInt(expInput, 10) <= 0 || parseInt(expInput, 10) > 365) {
-        const newPrompt = await ctx.reply('🚫 *Masa aktif tidak valid (1-365 hari).* Masukkan masa aktif lagi:', { parse_mode: 'Markdown' });
-        if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
-        return;
-    }
-
-    state.exp = parseInt(expInput, 10);
-
-    const { username, exp, serverId, type } = state;
-    let loadingMessage;
-
-    try {
-        loadingMessage = await ctx.reply('⏳ Memproses permintaan perpanjangan...');
-
-        const serverDetails = await new Promise((resolve, reject) => {
-            db.get('SELECT harga, harga_reseller, nama_server, quota, iplimit FROM Server WHERE id = ?', [serverId], (err, row) => {
-                if (err) reject(new Error("Gagal mengambil detail server."));
-                else if (!row) reject(new Error("Server tidak ditemukan."));
-                else resolve(row);
-            });
-        });
-
-        const userRole = await getUserRole(userId);
-        const hargaPerHari = userRole === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
-        const totalHarga = calculatePrice(hargaPerHari, exp);
-
-        const userDbInfo = await new Promise((resolve, reject) => {
-            db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
-                if (err) reject(new Error("Gagal mengambil saldo Anda."));
-                else if (!row) reject(new Error("Data pengguna tidak ditemukan."));
-                else resolve(row);
-            });
-        });
-
-        if (userDbInfo.saldo < totalHarga) {
-            throw new Error(`Saldo Anda (Rp${userDbInfo.saldo.toLocaleString('id-ID')}) tidak cukup. Harga perpanjangan: Rp${totalHarga.toLocaleString('id-ID')}.`);
+    // ==========================================================
+    // ALUR 3: PEMBUATAN AKUN PAY-AS-YOU-GO (BARU)
+    // ==========================================================
+    else if (state.step && state.step.startsWith('username_payg_')) {
+        if (!state.action || state.action !== 'payg' || !state.type || !state.serverId) {
+            delete userState[userId]; 
+            console.error("State PAYG tidak lengkap untuk input username:", state);
+            return;
+        }
+        state.username = ctx.message.text.trim();
+        try { await ctx.deleteMessage(); } catch(e){}
+        if (userState[userId]?.lastBotMessageId) { 
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {} 
         }
 
-        const renewFunctions = { ssh: renewssh, vmess: renewvmess, vless: renewvless, trojan: renewtrojan };
-        if (!renewFunctions[type]) throw new Error("Tipe layanan tidak valid untuk perpanjangan.");
-
-        const panelRenewResponse = (type === 'ssh')
-            ? await renewFunctions[type](username, exp, serverDetails.iplimit, serverId)
-            : await renewFunctions[type](username, exp, serverDetails.quota, serverDetails.iplimit, serverId);
-        
-        if (typeof panelRenewResponse === 'string' && panelRenewResponse.startsWith('❌')) {
-            throw new Error(panelRenewResponse);
+        if (state.username.length < 3 || state.username.length > 20 || /[^a-zA-Z0-9]/.test(state.username)) {
+            const newPrompt = await ctx.reply('🚫 *Username tidak valid (3-20 karakter, hanya huruf & angka).* Coba lagi:', { parse_mode: 'Markdown' });
+            if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+            return;
         }
 
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, userId], (err) => {
-                if (err) reject(new Error("KRITIS: Gagal potong saldo setelah perpanjangan sukses. Hubungi admin!"));
-                else resolve();
-            });
-        });
+        const existingPayg = await new Promise((resolve) => db.get("SELECT id FROM payg_sessions WHERE account_username = ? AND server_id = ? AND protocol = ? AND is_active = 1", [state.username, state.serverId, state.type], (_,r)=>resolve(r)));
+        if(existingPayg) {
+            const newPrompt = await ctx.reply(`⚠️ Username '<code>${escapeHtml(state.username)}</code>' sudah digunakan di layanan PAYG server ini. Coba username lain:`, {parse_mode: 'HTML'});
+            if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+            return;
+        }
 
-        const accountInfo = await new Promise((resolve, reject) => {
-            db.get("SELECT expiry_date FROM created_accounts WHERE server_id = ? AND account_username = ? AND protocol = ?", [serverId, username, type], (err, row) => {
-                if (err || !row) reject(new Error("Gagal menemukan akun di DB untuk update expiry."));
-                else resolve(row);
-            });
-        });
+        if (state.type === 'ssh') {
+            state.step = `password_payg_${state.type}`;
+            const nextPrompt = await ctx.reply('🔑 *Masukkan password (min 6 karakter, alfanumerik):*', { parse_mode: 'Markdown' });
+            if(userState[userId]) userState[userId].lastBotMessageId = nextPrompt.message_id;
+        } else {
+            await processFinalPaygCreation(ctx);
+        }
+    } else if (state.step && state.step.startsWith('password_payg_')) {
+        if (!state.action || state.action !== 'payg' || state.type !== 'ssh' || !state.serverId || !state.username) {
+            delete userState[userId]; 
+            console.error("State PAYG tidak lengkap untuk input password:", state);
+            return;
+        }
+        state.password = ctx.message.text.trim();
+        try { await ctx.deleteMessage(); } catch(e){}
+        if (userState[userId]?.lastBotMessageId) { 
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, userState[userId].lastBotMessageId); } catch(e) {} 
+        }
 
-        const currentExpiry = new Date(accountInfo.expiry_date);
-        const now = new Date();
-        const startDate = currentExpiry > now ? currentExpiry : now;
-
-        const newExpiryDate = new Date(startDate);
-        newExpiryDate.setDate(startDate.getDate() + exp);
-        newExpiryDate.setHours(23, 59, 59, 999);
-
-        // ======================================================================
-        // PERBAIKAN FINAL DI SINI: Menghapus `days_left_notified` dari query
-        // ======================================================================
-        await new Promise((resolve, reject) => {
-            const sql = `
-                UPDATE created_accounts 
-                SET expiry_date = ?, duration_days = duration_days + ?, is_active = 1 
-                WHERE server_id = ? AND account_username = ? AND protocol = ?`;
-            
-            const params = [newExpiryDate.toISOString(), exp, serverId, username, type];
-
-            db.run(sql, params, function(err) {
-                if (err) {
-                    console.error("DATABASE UPDATE ERROR:", err);
-                    reject(new Error("Gagal update tanggal expiry di DB. Hubungi admin."));
-                } else if (this.changes === 0) {
-                    console.error("DATABASE UPDATE FAILED: No rows affected.", { serverId, username, type });
-                    reject(new Error("Gagal update DB: Akun tidak ditemukan untuk diupdate."));
-                } else {
-                    resolve();
-                }
-            });
-        });
+        if (state.password.length < 6 || /[^a-zA-Z0-9]/.test(state.password)) {
+            const newPrompt = await ctx.reply('🚫 *Password tidak valid (min 6 karakter, alfanumerik).* Coba lagi:', { parse_mode: 'Markdown' });
+            if(userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+            return;
+        }
         
-        await recordUserTransaction(userId);
+        await processFinalPaygCreation(ctx);
+    }
+    
+    // ==========================================================
+    // ALUR 4: PERPANJANGAN AKUN (RENEW)
+    // ==========================================================
+    else if (state.step && state.step.startsWith('exp_renew_')) {
+        if (!state.action || state.action !== 'renew' || !state.type || !state.serverId || !state.username) {
+            console.error("State tidak lengkap untuk perpanjangan:", state);
+            delete userState[userId];
+            await ctx.reply("⚠️ Terjadi kesalahan sesi perpanjangan. Ulangi dari awal.");
+            return sendMainMenu(ctx);
+        }
+
+        const expInput = ctx.message.text.trim();
+        const botExpPromptId = userState[userId]?.lastBotMessageId;
+        if (botExpPromptId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, botExpPromptId); } catch (e) {}
+            if (userState[userId]) userState[userId].lastBotMessageId = null;
+        }
+        try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+
+        if (!/^\d+$/.test(expInput) || parseInt(expInput, 10) <= 0 || parseInt(expInput, 10) > 365) {
+            const newPrompt = await ctx.reply('🚫 *Masa aktif tidak valid (1-365 hari).* Masukkan masa aktif lagi:', { parse_mode: 'Markdown' });
+            if (userState[userId]) userState[userId].lastBotMessageId = newPrompt.message_id;
+            return;
+        }
+
+        state.exp = parseInt(expInput, 10);
+
+        const { username, exp, serverId, type } = state;
+        let loadingMessage;
 
         try {
-            await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id);
-        } catch(e) {}
-        
-        await ctx.reply(panelRenewResponse, { parse_mode: 'Markdown' });
+            loadingMessage = await ctx.reply('⏳ Memproses permintaan perpanjangan...');
 
-        await sendRenewNotification(userId, userRole, type, serverDetails.nama_server, username, exp, totalHarga, newExpiryDate);
+            const serverDetails = await new Promise((resolve, reject) => {
+                db.get('SELECT harga, harga_reseller, nama_server, quota, iplimit FROM Server WHERE id = ?', [serverId], (err, row) => {
+                    if (err) reject(new Error("Gagal mengambil detail server."));
+                    else if (!row) reject(new Error("Server tidak ditemukan."));
+                    else resolve(row);
+                });
+            });
 
-    } catch (error) {
-        console.error('Error saat proses perpanjangan akun:', error.message, error.stack);
-        const errorMessage = `🚫 Gagal: ${error.message.replace('❌', '').trim()}`;
-        if (loadingMessage) {
-            try { await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, errorMessage); } 
-            catch (editError) { await ctx.reply(errorMessage); }
-        } else {
-            await ctx.reply(errorMessage);
+            const userRole = await getUserRole(userId);
+            const hargaPerHari = userRole === 'reseller' ? serverDetails.harga_reseller : serverDetails.harga;
+            const totalHarga = calculatePrice(hargaPerHari, exp);
+
+            const userDbInfo = await new Promise((resolve, reject) => {
+                db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
+                    if (err) reject(new Error("Gagal mengambil saldo Anda."));
+                    else if (!row) reject(new Error("Data pengguna tidak ditemukan."));
+                    else resolve(row);
+                });
+            });
+
+            if (userDbInfo.saldo < totalHarga) {
+                throw new Error(`Saldo Anda (Rp${userDbInfo.saldo.toLocaleString('id-ID')}) tidak cukup. Harga perpanjangan: Rp${totalHarga.toLocaleString('id-ID')}.`);
+            }
+
+            const renewFunctions = { ssh: renewssh, vmess: renewvmess, vless: renewvless, trojan: renewtrojan };
+            if (!renewFunctions[type]) throw new Error("Tipe layanan tidak valid untuk perpanjangan.");
+
+            const panelRenewResponse = (type === 'ssh')
+                ? await renewFunctions[type](username, exp, serverDetails.iplimit, serverId)
+                : await renewFunctions[type](username, exp, serverDetails.quota, serverDetails.iplimit, serverId);
+            
+            if (typeof panelRenewResponse === 'string' && panelRenewResponse.startsWith('❌')) {
+                throw new Error(panelRenewResponse);
+            }
+
+            await new Promise((resolve, reject) => {
+                db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, userId], (err) => {
+                    if (err) reject(new Error("KRITIS: Gagal potong saldo setelah perpanjangan sukses. Hubungi admin!"));
+                    else resolve();
+                });
+            });
+
+            const accountInfo = await new Promise((resolve, reject) => {
+                db.get("SELECT expiry_date FROM created_accounts WHERE server_id = ? AND account_username = ? AND protocol = ?", [serverId, username, type], (err, row) => {
+                    if (err || !row) reject(new Error("Gagal menemukan akun di DB untuk update expiry."));
+                    else resolve(row);
+                });
+            });
+
+            const currentExpiry = new Date(accountInfo.expiry_date);
+            const now = new Date();
+            const startDate = currentExpiry > now ? currentExpiry : now;
+
+            const newExpiryDate = new Date(startDate);
+            newExpiryDate.setDate(startDate.getDate() + exp);
+            newExpiryDate.setHours(23, 59, 59, 999);
+            
+            await new Promise((resolve, reject) => {
+                const sql = `
+                    UPDATE created_accounts 
+                    SET expiry_date = ?, duration_days = duration_days + ?, is_active = 1 
+                    WHERE server_id = ? AND account_username = ? AND protocol = ?`;
+                
+                const params = [newExpiryDate.toISOString(), exp, serverId, username, type];
+
+                db.run(sql, params, function(err) {
+                    if (err) {
+                        console.error("DATABASE UPDATE ERROR:", err);
+                        reject(new Error("Gagal update tanggal expiry di DB. Hubungi admin."));
+                    } else if (this.changes === 0) {
+                        console.error("DATABASE UPDATE FAILED: No rows affected.", { serverId, username, type });
+                        reject(new Error("Gagal update DB: Akun tidak ditemukan untuk diupdate."));
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+            
+            await recordUserTransaction(userId);
+
+            try {
+                await ctx.telegram.deleteMessage(ctx.chat.id, loadingMessage.message_id);
+            } catch(e) {}
+            
+            await ctx.reply(panelRenewResponse, { parse_mode: 'Markdown' });
+
+            await sendRenewNotification(userId, userRole, type, serverDetails.nama_server, username, exp, totalHarga, newExpiryDate);
+
+        } catch (error) {
+            console.error('Error saat proses perpanjangan akun:', error.message, error.stack);
+            const errorMessage = `🚫 Gagal: ${error.message.replace('❌', '').trim()}`;
+            if (loadingMessage) {
+                try { await ctx.telegram.editMessageText(ctx.chat.id, loadingMessage.message_id, undefined, errorMessage); } 
+                catch (editError) { await ctx.reply(errorMessage); }
+            } else {
+                await ctx.reply(errorMessage);
+            }
+        } finally {
+            delete userState[userId];
+            await sendMainMenu(ctx);
         }
-    } finally {
-        delete userState[userId];
-        await sendMainMenu(ctx);
     }
-}
     
-    // Alur Admin (addserver, addbug, edit)
+    // ==========================================================
+    // ALUR 5: ADMIN - TAMBAH SERVER & BUG
+    // ==========================================================
     else if (state.step === 'addserver_domain') { 
         if (!adminIds.includes(String(userId))) { delete userState[userId]; return; } 
         try { await ctx.deleteMessage(ctx.message.message_id); } catch(e){}
@@ -6321,6 +6680,10 @@ Simpan bug ini?`;
         });
         if (userState[userId]) userState[userId].lastBotMessageId = confirmMsg.message_id; 
     }
+    
+    // ==========================================================
+    // ALUR 6: ADMIN - EDIT SERVER
+    // ==========================================================
     else if (state.step && state.step.startsWith('input_edit_')) { 
         if (!adminIds.includes(String(userId))) { delete userState[userId]; return; }
 
@@ -6396,6 +6759,10 @@ Simpan bug ini?`;
             await sendAdminMenu(ctx); 
         }
     }  
+    
+    // ==========================================================
+    // JIKA STATE TIDAK DIKENALI
+    // ==========================================================
     else {
         // console.log(`Input teks tidak ditangani untuk user ${userId} dengan state:`, JSON.stringify(state), `Teks: "${ctx.message.text}"`);
     }
