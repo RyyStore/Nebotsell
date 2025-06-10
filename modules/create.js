@@ -2,27 +2,8 @@ const axios = require('axios');
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./sellvpn.db');
 
-// Fungsi untuk mengirim notifikasi ke bot Telegram
-async function sendTelegramNotification(chatId, botToken, message) {
-  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-  const params = {
-    chat_id: chatId,
-    text: message,
-    parse_mode: 'HTML' // Pastikan menggunakan parse_mode HTML
-  };
-
-  try {
-    const response = await axios.post(url, params);
-    if (response.data.ok) {
-      console.log('Notifikasi berhasil dikirim');
-    } else {
-      console.error('Gagal mengirim notifikasi:', response.data.description);
-    }
-  } catch (error) {
-    console.error('Error mengirim notifikasi:', error.response ? error.response.data : error.message);
-  }
-}
-
+// Fungsi calculatePrice dan sendTelegramNotification tetap sama
+// ... (salin fungsi calculatePrice dan sendTelegramNotification dari file asli Anda ke sini) ...
 function calculatePrice(duration, iplimit, quota) {
   // Jika kuota = 0 (unlimited), harga adalah 334 per hari
   if (quota === 0 || quota === '0 GB') {
@@ -62,54 +43,38 @@ function calculatePrice(duration, iplimit, quota) {
 }
 
 
+// --- MODIFIKASI DIMULAI DARI SINI ---
 
 // Fungsi untuk membuat akun SSH
-async function createssh(username, password, exp, iplimit, serverId, usernameTelegram) {
-  console.log(`Creating SSH account for ${username} with expiry ${exp} days, IP limit ${iplimit}, and password ${password}`);
+// Tambahkan parameter baru 'isPayAsYouGo' di akhir
+async function createssh(username, password, exp, iplimit, serverId, isPayAsYouGo = false) {
+  console.log(`Creating SSH account for ${username}, PAYG: ${isPayAsYouGo}`);
   
-  // Validasi username
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-
-
-  // Hitung harga berdasarkan durasi dan jumlah IP
-  let price;
-  try {
-    price = calculatePrice(exp, iplimit);
-  } catch (error) {
-    return `❌ ${error.message}`;
-  }
-
-  // Ambil domain dan city dari database
   return new Promise((resolve, reject) => {
     db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, server) => {
-      if (err) {
-        console.error('Error fetching server:', err.message);
+      if (err || !server) {
+        console.error('Error fetching server:', err ? err.message : 'Server not found');
         return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
       }
 
-      if (!server) return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
-
-      const domain = server.domain;
-      const auth = server.auth;
-      
+      const { domain, auth } = server;
       const param = `:5888/createssh?user=${username}&password=${password}&exp=${exp}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
+
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const sshData = response.data.data;
-            const quota = sshData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+            
+            // Tentukan teks status berdasarkan isPayAsYouGo
+            const statusText = isPayAsYouGo 
+                ? `Model    : \`Pay As You Go\``
+                : `Expires  : \`${sshData.expired}\``;
 
-            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-            let price;
-            try {
-              price = calculatePrice(exp, iplimit, quota);
-            } catch (error) {
-              return resolve(`❌ ${error.message}`);
-            }
             const msg = `
 ──────────────────────
 *CREATE SSH SUCCESS*
@@ -118,16 +83,16 @@ async function createssh(username, password, exp, iplimit, serverId, usernameTel
 ┌─────────────────────
 │ *Username* : \`${sshData.username}\`
 │ *Password* : \`${sshData.password}\`
-│ *Domain*   : \`${sshData.domain}\`
+│ *Domain* : \`${sshData.domain}\`
 │ *Port TLS* : \`443\`
 │ *Port HTTP*: \`80\`
-│ *OpenSSH*  : \`22\`
-│ *UdpSSH*   : \`1-65535\`
-│ *DNS*      : \`443, 53, 22\`
+│ *OpenSSH* : \`22\`
+│ *UdpSSH* : \`1-65535\`
+│ *DNS* : \`443, 53, 22\`
 │ *Dropbear* : \`443, 109\`
-│ *SSH WS*   : \`80\`
+│ *SSH WS* : \`80\`
 │ *SSH SSL WS*: \`443\`
-│ *SSL/TLS*  : \`443\`
+│ *SSL/TLS* : \`443\`
 │ *OVPN SSL* : \`443\`
 │ *OVPN TCP* : \`1194\`
 │ *OVPN UDP* : \`2200\`
@@ -155,18 +120,18 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 \`
 ───────────────────────
 ┌─────────────────────
-│ Expires: \`${sshData.expired}\`
+│ ${statusText}
 │ IP Limit: \`${sshData.ip_limit}\`
 └─────────────────────
 Terimakasih Telah Menggunakan layanan kami!
 `;
-              console.log('SSH account created successfully');
-              return resolve(msg);
-            } else {
-              console.log('Error creating SSH account');
-              return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
-            }
-          })
+            console.log('SSH account created successfully');
+            return resolve(msg);
+          } else {
+            console.log('Error creating SSH account');
+            return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
+          }
+        })
         .catch(error => {
           console.error('Error saat membuat SSH:', error);
           return resolve('❌ Terjadi kesalahan saat membuat SSH. Silakan coba lagi nanti.');
@@ -176,51 +141,35 @@ Terimakasih Telah Menggunakan layanan kami!
 }
 
 // Fungsi untuk membuat akun VMess
-async function createvmess(username, exp, quota, iplimit, serverId, usernameTelegram) {
-  console.log(`Creating VMess account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
+// Tambahkan parameter baru 'isPayAsYouGo' di akhir
+async function createvmess(username, exp, quota, iplimit, serverId, isPayAsYouGo = false) {
+  console.log(`Creating VMess account for ${username}, PAYG: ${isPayAsYouGo}`);
   
-  // Validasi username
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-
-  // Hitung harga berdasarkan durasi dan jumlah IP
-  let price;
-  try {
-    price = calculatePrice(exp, iplimit);
-  } catch (error) {
-    return `❌ ${error.message}`;
-  }
-
-  // Ambil domain dan city dari database
   return new Promise((resolve, reject) => {
     db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, server) => {
-      if (err) {
-        console.error('Error fetching server:', err.message);
+      if (err || !server) {
+        console.error('Error fetching server:', err ? err.message : 'Server not found');
         return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
       }
 
-      if (!server) return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
-
-      const domain = server.domain;
-      const auth = server.auth;
-      
+      const { domain, auth } = server;
       const param = `:5888/createvmess?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
+      
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const vmessData = response.data.data;
-            const quota = vmessData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
+            
+            // Tentukan teks status berdasarkan isPayAsYouGo
+            const statusText = isPayAsYouGo
+                ? `Model    : \`Pay As You Go\``
+                : `Expiry   : \`${vmessData.expired}\``;
 
-            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-            let price;
-            try {
-              price = calculatePrice(exp, iplimit, quota);
-            } catch (error) {
-              return resolve(`❌ ${error.message}`);
-            }
             const msg = `
 ──────────────────────
 *CREATE VMESS SUCCESS*
@@ -228,13 +177,13 @@ async function createvmess(username, exp, quota, iplimit, serverId, usernameTele
 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vmessData.username}\`
-│ *Domain*   : \`${vmessData.domain}\`
+│ *Domain* : \`${vmessData.domain}\`
 │ *Port TLS* : \`443\`
 │ *Port HTTP*: \`80\`
 │ *Alter ID* : \`0\`
 │ *Security* : \`Auto\`
-│ *Network*  : \`Websocket (WS)\`
-│ *Path*     : \`/vmess\`
+│ *Network* : \`Websocket (WS)\`
+│ *Path* : \`/vmess\`
 │ *Path GRPC*: \`vmess-grpc\`
 └─────────────────────
 *URL VMESS TLS*
@@ -257,19 +206,19 @@ ${vmessData.vmess_grpc_link}
 ${vmessData.uuid}
 \`
 ┌─────────────────────
-│ Expiry: \`${vmessData.expired}\`
+│ ${statusText}
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
 │ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} \`
 └─────────────────────
 Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
-              console.log('VMess account created successfully');
-              return resolve(msg);
-            } else {
-              console.log('Error creating VMess account');
-              return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
-            }
-          })
+            console.log('VMess account created successfully');
+            return resolve(msg);
+          } else {
+            console.log('Error creating VMess account');
+            return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
+          }
+        })
         .catch(error => {
           console.error('Error saat membuat VMess:', error);
           return resolve('❌ Terjadi kesalahan saat membuat VMess. Silakan coba lagi nanti.');
@@ -279,59 +228,35 @@ Terimakasih Telah Menggunakan Layanan Kami!✿
 }
 
 // Fungsi untuk membuat akun VLESS
-async function createvless(username, exp, quota, iplimit, serverId, usernameTelegram) {
-  console.log(`Creating VLESS account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
-  
-  // Validasi username
+// Tambahkan parameter baru 'isPayAsYouGo' di akhir
+async function createvless(username, exp, quota, iplimit, serverId, isPayAsYouGo = false) {
+  console.log(`Creating VLESS account for ${username}, PAYG: ${isPayAsYouGo}`);
+
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-  // Hitung harga berdasarkan durasi dan jumlah IP
-  let price;
-  try {
-    price = calculatePrice(exp, iplimit);
-  } catch (error) {
-    return `❌ ${error.message}`;
-  }
-
-  // Ambil domain dan city dari database
   return new Promise((resolve, reject) => {
     db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, server) => {
-      if (err) {
-        console.error('Error fetching server:', err.message);
+      if (err || !server) {
+        console.error('Error fetching server:', err ? err.message : 'Server not found');
         return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
       }
 
-      if (!server) return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
-
-      const domain = server.domain;
-      const auth = server.auth;
-      
-      const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
-
-      // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-      let price;
-      try {
-        price = calculatePrice(exp, iplimit, quota);
-      } catch (error) {
-        return resolve(`❌ ${error.message}`);
-      }
+      const { domain, auth } = server;
       const param = `:5888/createvless?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
+      
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const vlessData = response.data.data;
-            const quota = vlessData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
 
-            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-            let price;
-            try {
-              price = calculatePrice(exp, iplimit, quota);
-            } catch (error) {
-              return resolve(`❌ ${error.message}`);
-            }
+            // Tentukan teks status berdasarkan isPayAsYouGo
+            const statusText = isPayAsYouGo
+                ? `Model    : \`Pay As You Go\``
+                : `Expiry   : \`${vlessData.expired}\``;
+
             const msg = `
 ──────────────────────
 *CREATE VLESS SUCCESS*
@@ -339,13 +264,13 @@ async function createvless(username, exp, quota, iplimit, serverId, usernameTele
 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vlessData.username}\`
-│ *Domain*   : \`${vlessData.domain}\`
-│ *NS*       : \`${vlessData.ns_domain}\`
+│ *Domain* : \`${vlessData.domain}\`
+│ *NS* : \`${vlessData.ns_domain}\`
 │ *Port TLS* : \`443\`
 │ *Port HTTP*: \`80\`
 │ *Security* : \`Auto\`
-│ *Network*  : \`Websocket (WS)\`
-│ *Path*     : \`/vless\`
+│ *Network* : \`Websocket (WS)\`
+│ *Path* : \`/vless\`
 │ *Path GRPC*: \`vless-grpc\`
 └─────────────────────
 *URL VLESS TLS*
@@ -368,19 +293,19 @@ ${vlessData.vless_grpc_link}
 ${vlessData.uuid}
 \`
 ┌─────────────────────
-│ Expiry: \`${vlessData.expired}\`
+│ ${statusText}
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
 │ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
 └─────────────────────
 Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
-              console.log('VLESS account created successfully');
-              return resolve(msg);
-            } else {
-              console.log('Error creating VLESS account');
-              return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
-            }
-          })
+            console.log('VLESS account created successfully');
+            return resolve(msg);
+          } else {
+            console.log('Error creating VLESS account');
+            return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
+          }
+        })
         .catch(error => {
           console.error('Error saat membuat VLESS:', error);
           return resolve('❌ Terjadi kesalahan saat membuat VLESS. Silakan coba lagi nanti.');
@@ -390,61 +315,35 @@ Terimakasih Telah Menggunakan Layanan Kami!✿
 }
 
 // Fungsi untuk membuat akun Trojan
-async function createtrojan(username, exp, quota, iplimit, serverId, usernameTelegram) {
-  console.log(`Creating Trojan account for ${username} with expiry ${exp} days, quota ${quota} GB, limit IP ${iplimit} on server ${serverId}`);
-  
-  // Validasi username
+// Tambahkan parameter baru 'isPayAsYouGo' di akhir
+async function createtrojan(username, exp, quota, iplimit, serverId, isPayAsYouGo = false) {
+  console.log(`Creating Trojan account for ${username}, PAYG: ${isPayAsYouGo}`);
+
   if (/\s/.test(username) || /[^a-zA-Z0-9]/.test(username)) {
     return '❌ Username tidak valid. Mohon gunakan hanya huruf dan angka tanpa spasi.';
   }
 
-
-  // Hitung harga berdasarkan durasi dan jumlah IP
-  let price;
-  try {
-    price = calculatePrice(exp, iplimit);
-  } catch (error) {
-    return `❌ ${error.message}`;
-  }
-
-  // Ambil domain dan city dari database
   return new Promise((resolve, reject) => {
     db.get('SELECT * FROM Server WHERE id = ?', [serverId], (err, server) => {
-      if (err) {
-        console.error('Error fetching server:', err.message);
+      if (err || !server) {
+        console.error('Error fetching server:', err ? err.message : 'Server not found');
         return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
       }
 
-      if (!server) return resolve('❌ Server tidak ditemukan. Silakan coba lagi.');
-
-      const domain = server.domain;
-      const auth = server.auth;
-      
-      const quota = server.quota || 0; // Ambil quota dari database, default 0 jika tidak ada
-
-      // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-      let price;
-      try {
-        price = calculatePrice(exp, iplimit, quota);
-      } catch (error) {
-        return resolve(`❌ ${error.message}`);
-      }
-      
+      const { domain, auth } = server;
       const param = `:5888/createtrojan?user=${username}&exp=${exp}&quota=${quota}&iplimit=${iplimit}&auth=${auth}`;
       const url = `http://${domain}${param}`;
+      
       axios.get(url)
         .then(response => {
           if (response.data.status === "success") {
             const trojanData = response.data.data;
-            const quota = trojanData.quota || 0; // Ambil quota dari respons API, default 0 jika tidak ada
 
-            // Hitung harga berdasarkan durasi, jumlah IP, dan quota
-            let price;
-            try {
-              price = calculatePrice(exp, iplimit, quota);
-            } catch (error) {
-              return resolve(`❌ ${error.message}`);
-            }
+            // Tentukan teks status berdasarkan isPayAsYouGo
+            const statusText = isPayAsYouGo
+                ? `Model    : \`Pay As You Go\``
+                : `Expiry   : \`${trojanData.expired}\``;
+
             const msg = `
 ──────────────────────
 *CREATE TROJAN SUCCESS*
@@ -452,12 +351,12 @@ async function createtrojan(username, exp, quota, iplimit, serverId, usernameTel
 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${trojanData.username}\`
-│ *Domain*   : \`${trojanData.domain}\`
+│ *Domain* : \`${trojanData.domain}\`
 │ *Port TLS* : \`443\`
 │ *Port HTTP*: \`80\`
 │ *Security* : \`Auto\`
-│ *Network*  : \`Websocket (WS)\`
-│ *Path*     : \`/trojan-ws\`
+│ *Network* : \`Websocket (WS)\`
+│ *Path* : \`/trojan-ws\`
 │ *Path GRPC*: \`trojan-grpc\`
 └─────────────────────
 *URL TROJAN TLS*
@@ -480,19 +379,19 @@ ${trojanData.trojan_grpc_link}
 ${trojanData.uuid}
 \`
 ┌─────────────────────
-│ Expiry: \`${trojanData.expired}\`
+│ ${statusText}
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
 │ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} \`
 └─────────────────────
 Terimakasih  Telah menggunakan layanan kami!✿
 `;
-              console.log('Trojan account created successfully');
-              return resolve(msg);
-            } else {
-              console.log('Error creating Trojan account');
-              return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
-            }
-          })
+            console.log('Trojan account created successfully');
+            return resolve(msg);
+          } else {
+            console.log('Error creating Trojan account');
+            return resolve(`❌ Terjadi kesalahan: ${response.data.message}`);
+          }
+        })
         .catch(error => {
           console.error('Error saat membuat Trojan:', error);
           return resolve('❌ Terjadi kesalahan saat membuat Trojan. Silakan coba lagi nanti.');
@@ -500,6 +399,5 @@ Terimakasih  Telah menggunakan layanan kami!✿
     });
   });
 }
-
 
 module.exports = { createssh, createvmess, createvless, createtrojan };
