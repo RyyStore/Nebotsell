@@ -148,6 +148,11 @@ db.serialize(() => {
         }
     });
 
+ db.run("ALTER TABLE created_accounts ADD COLUMN days_left_notified INTEGER DEFAULT 0", () => {
+        // Abaikan error jika kolom sudah ada, ini hanya untuk memastikan.
+        console.log('Kolom days_left_notified untuk notifikasi expired sudah diperiksa/ditambahkan.');
+    });
+
 db.run(`CREATE TABLE IF NOT EXISTS Bugs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bug_code TEXT UNIQUE NOT NULL,
@@ -243,7 +248,109 @@ bot.command(['start', 'menu'], async (ctx) => {
   await displayTutorialDashboard(ctx);
 });
 
+async function checkAndNotifyExpiringAccounts() {
+    console.log('[EXPIRY_NOTIF] Memulai pengecekan akun yang akan kedaluwarsa...');
+    const notificationWindows = [3, 1]; // Kirim notif saat sisa 3 hari dan 1 hari
 
+    for (const days of notificationWindows) {
+        try {
+            const targetDate = new Date();
+            targetDate.setDate(targetDate.getDate() + days);
+            const targetDateString = targetDate.toISOString().split('T')[0];
+
+            // Query untuk akun yang akan expired pada tanggal target & BELUM dinotifikasi untuk periode ini
+            const query = `
+                SELECT ca.id, ca.created_by_user_id, ca.account_username, ca.protocol, ca.server_id, s.nama_server
+                FROM created_accounts ca
+                JOIN Server s ON ca.server_id = s.id
+                WHERE date(ca.expiry_date) = date(?) AND ca.is_active = 1 AND ca.days_left_notified != ?
+            `;
+
+            const accounts = await new Promise((resolve, reject) => {
+                db.all(query, [targetDateString, days], (err, rows) => err ? reject(err) : resolve(rows || []));
+            });
+
+            if (accounts.length > 0) {
+                console.log(`[EXPIRY_NOTIF] Ditemukan ${accounts.length} akun yang akan kedaluwarsa dalam ${days} hari.`);
+            }
+
+            for (const acc of accounts) {
+                const message = `
+⚠️ *Peringatan Kedaluwarsa* ⚠️
+
+Halo! Akun Anda akan segera kedaluwarsa.
+──────────────────────
+🔹 Akun: *${escapeHtml(acc.account_username)}* (${acc.protocol.toUpperCase()})
+🔹 Server: *${escapeHtml(acc.nama_server)}*
+🔹 Kedaluwarsa dalam: *${days} hari lagi*
+──────────────────────
+Jangan sampai koneksi terputus! Silakan perpanjang masa aktif akun Anda dengan menekan tombol di bawah ini.
+                `;
+
+                // Tombol yang langsung mengarahkan ke alur perpanjangan
+                const keyboard = [[{
+                    text: `♻️ Perpanjang Akun ${escapeHtml(acc.account_username)}`,
+                    callback_data: `start_renew_${acc.server_id}_${acc.protocol}_${acc.account_username}`
+                }]];
+
+                try {
+                    // Kirim notifikasi ke pengguna
+                    await callTelegramApiWithRetry(() => 
+                        bot.telegram.sendMessage(acc.created_by_user_id, message, {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: keyboard }
+                        })
+                    );
+
+                    // Tandai bahwa notifikasi sudah terkirim
+                    await new Promise((resolve, reject) => {
+                        db.run('UPDATE created_accounts SET days_left_notified = ? WHERE id = ?', [days, acc.id], (err) => err ? reject(err) : resolve());
+                    });
+
+                    console.log(`[EXPIRY_NOTIF] Notifikasi ${days} hari terkirim ke user ${acc.created_by_user_id} untuk akun ${acc.account_username}.`);
+
+                } catch (e) {
+                    console.error(`[EXPIRY_NOTIF] Gagal mengirim notifikasi ke user ${acc.created_by_user_id}: ${e.message}`);
+                }
+            }
+        } catch (error) {
+            console.error(`[EXPIRY_NOTIF] Error saat memproses notifikasi untuk ${days} hari:`, error);
+        }
+    }
+}
+
+// Jalankan pengecekan setiap hari jam 8 pagi Waktu Jakarta
+cron.schedule('0 8 * * *', checkAndNotifyExpiringAccounts, {
+    scheduled: true,
+    timezone: "Asia/Jakarta"
+});
+console.log(`[CRON] Tugas notifikasi kedaluwarsa dijadwalkan berjalan setiap jam 8:00 pagi (WIB).`);
+// Jalankan juga 20 detik setelah bot start untuk jaga-jaga jika bot mati saat jadwal cron
+setTimeout(checkAndNotifyExpiringAccounts, 20000); 
+
+// Handler untuk tombol "Perpanjang Akun" dari notifikasi
+bot.action(/start_renew_(.+?)_(.+?)_(.+)/, async (ctx) => {
+    const [serverId, protocol, username] = ctx.match.slice(1);
+    const userId = ctx.from.id;
+
+    await ctx.answerCbQuery(`Memulai alur perpanjangan untuk ${username}...`);
+    try { await ctx.deleteMessage(); } catch(e) {}
+
+    // Set state pengguna agar langsung masuk ke alur input masa aktif
+    userState[userId] = {
+        step: `exp_renew_${protocol}`,
+        action: 'renew',
+        type: protocol,
+        serverId: serverId,
+        username: username
+    };
+
+    const promptMsg = await ctx.reply(
+        `⏳ Anda akan memperpanjang akun: <b>${escapeHtml(username)}</b>\n\nMasukkan masa aktif perpanjangan (dalam hari, contoh: 7, 30):`,
+        { parse_mode: 'HTML' }
+    );
+    if(userState[userId]) userState[userId].lastBotMessageId = promptMsg.message_id;
+});
 
 async function isUsernameAvailable(username, serverId, protocol) {
     return new Promise(async (resolve, reject) => { // Tambahkan async di sini
@@ -360,7 +467,7 @@ async function stopPaygSession(sessionId, reason) {
 
         const groupMessage = `
 ──────────────────────
-⟨ ⏹️ Layanan PAYG Dihentikan ⟩
+⟨ Layanan PAYG Dihentikan ⟩
 ──────────────────────
 Pengguna: <a href="tg://user?id=${user_id}">${escapeHtml(userDisplayName)}</a>
 ──────────────────────
@@ -520,14 +627,15 @@ async function checkUserMembershipInAllGroups(ctx, userId) {
 async function displayTutorialDashboard(ctx) {
     const userId = ctx.from.id;
 
-    // Logika untuk membersihkan pesan lama tetap sama
     if (ctx.callbackQuery) {
-        // Jika ini dari callback "kembali", tidak perlu hapus pesan, cukup edit
+        // Jika dipanggil dari tombol "Kembali", tidak perlu hapus pesan, cukup edit
     } else {
         if (userMessages[userId]) {
             try { await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]); delete userMessages[userId]; } catch (e) {}
         }
-        try { await ctx.deleteMessage(); } catch(e) {}
+        if (ctx.message) {
+            try { await ctx.deleteMessage(); } catch(e) {}
+        }
     }
 
     const rawUsername = ctx.from.username || ctx.from.first_name || `Pengguna`;
@@ -540,10 +648,20 @@ async function displayTutorialDashboard(ctx) {
 
     const minResellerUpgradeTopUp = await getMinResellerUpgradeTopUp();
 
-    // Teks pesan tetap sama
+    // ==> PERUBAHAN DIMULAI DI SINI: Ambil data ranking <==
+    const ranking = await getAccountCreationRanking();
+    let rankingText = '<code>⚠️ Tidak ada data ranking.</code>';
+    if (ranking && ranking.length > 0) {
+      rankingText = "<code>" + ranking.map((user, index) => {
+        const medals = ["🥇", "🥈", "🥉"];
+        return `${medals[index] || '➥'} ${escapeHtml(cleanUsername(user.username) || `ID:${user.user_id}`)}: ${user.accounts_created_30days} akun`;
+      }).join('\n') + "</code>";
+    }
+    // ==> AKHIR PERUBAHAN <==
+
     const messageTextForTutorial = `
 <code><b>═════════════════════════════════</b></code>
-                 ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
+                  ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
 <code><b>═════════════════════════════════</b></code>
                      <b>⟨ DASHBOARD AWAL ⟩</b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
@@ -554,7 +672,7 @@ async function displayTutorialDashboard(ctx) {
 <b><code>Minimal Topup:</code></b><b><code>Rp ${minResellerUpgradeTopUp.toLocaleString('id-ID')}</code></b>
 <b><code>Diskon 50% dari harga normal!</code></b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<b><code>Fitur Baru, Pay As You Go</code></b>
+<blockquote><code>🏆</code> <code><b>TOP 3 CREATE AKUN (30 HARI)</b></code></blockquote>${rankingText}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 <b>Jika Sudah Paham Lanjut Ke Main Menu</b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
@@ -565,7 +683,6 @@ async function displayTutorialDashboard(ctx) {
 Silakan pilih opsi di bawah:
 `;
 
-    // --- KEYBOARD BARU YANG LEBIH SIMPLE ---
     const simplifiedKeyboard = [
         [
           { text: 'Panduan & Tutorial Bot', callback_data: 'tutorial_menu_show' },
@@ -583,19 +700,14 @@ Silakan pilih opsi di bawah:
     try {
         let sentMessage;
         if (ctx.callbackQuery) {
-            // Jika dipanggil dari tombol "Kembali", edit pesan yang ada
-            sentMessage = await ctx.editMessageText(messageTextForTutorial, messageOptions);
+            sentMessage = await callTelegramApiWithRetry(() => ctx.editMessageText(messageTextForTutorial, messageOptions));
         } else {
-            // Jika panggilan awal, kirim pesan baru
-            sentMessage = await ctx.replyWithHTML(messageTextForTutorial, messageOptions);
+            sentMessage = await callTelegramApiWithRetry(() => ctx.replyWithHTML(messageTextForTutorial, messageOptions));
         }
-        userMessages[userId] = sentMessage.message_id || (sentMessage.result && sentMessage.result.message_id) || ctx.callbackQuery.message.message_id;
+        const messageId = ctx.callbackQuery ? ctx.callbackQuery.message.message_id : sentMessage.message_id;
+        if (messageId) userMessages[userId] = messageId;
     } catch (error) {
         console.error('Error di displayTutorialDashboard:', error);
-        // Fallback jika terjadi error
-        await ctx.reply(`Selamat datang! Terjadi sedikit masalah saat menampilkan menu. Silakan coba /menu`, {
-             reply_markup: { inline_keyboard: [[{ text: 'MAIN MENU', callback_data: 'main_menu_refresh' }]] }
-        });
     }
 }
 // TAMBAHKAN FUNGSI BARU INI
@@ -1867,108 +1979,63 @@ async function getAccountCreationRanking() {
 async function sendMainMenu(ctx) {
   try {
     const userId = ctx.from.id;
-    const isAdmin = adminIds.includes(userId); // Asumsikan adminIds adalah array
+    const isAdmin = adminIds.includes(userId);
 
-    // console.log(`Memulai sendMainMenu untuk userId: ${userId}`); // Baris ini bisa Anda aktifkan/nonaktifkan
-
-    // Pengambilan data dari database tetap sama.
-    // Error dari promise ini akan ditangkap oleh blok catch utama di bawah.
+    // Ambil data yang dibutuhkan
     const [
-      serverCount,
-      userCount,
-      userData,
-      accountStats,
-      ranking,
-      trialData
+      serverCount, userCount, userData, accountStats, trialData
     ] = await Promise.all([
-      new Promise((resolve, reject) => {
-        db.get('SELECT COUNT(*) AS count FROM Server WHERE hidden = 0', (err, row) => {
-          if (err) reject(new Error(`DB Error (serverCount): ${err.message}`));
-          else resolve(row ? row.count : 0);
-        });
-      }),
-      new Promise((resolve, reject) => {
-        db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-          if (err) reject(new Error(`DB Error (userCount): ${err.message}`));
-          else resolve(row ? row.count : 0);
-        });
-      }),
-      new Promise((resolve, reject) => {
-        db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
-          if (err) reject(new Error(`DB Error (userData for ${userId}): ${err.message}`));
-          else resolve(row || { saldo: 0, role: 'member' });
-        });
-      }),
-      new Promise((resolve, reject) => {
-        db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', (err, row) => {
-          if (err) reject(new Error(`DB Error (accountStats): ${err.message}`));
-          else resolve(row || { total_30days: 0, total_global: 0 });
-        });
-      }),
-      getAccountCreationRanking(), // Pastikan fungsi ini terdefinisi dan menangani error DB-nya
-      new Promise((resolve, reject) => {
-        db.get('SELECT trial_count, last_trial_date FROM users WHERE user_id = ?', [userId], (err, row) => {
-          if (err) reject(new Error(`DB Error (trialData for ${userId}): ${err.message}`));
-          else resolve(row || { trial_count: 0, last_trial_date: null });
-        });
-      })
+      new Promise((resolve, reject) => db.get('SELECT COUNT(*) AS count FROM Server WHERE hidden = 0', (err, row) => err ? reject(err) : resolve(row ? row.count : 0))),
+      new Promise((resolve, reject) => db.get('SELECT COUNT(*) AS count FROM users', (err, row) => err ? reject(err) : resolve(row ? row.count : 0))),
+      new Promise((resolve, reject) => db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => err ? reject(err) : resolve(row || { saldo: 0, role: 'member' }))),
+      new Promise((resolve, reject) => db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', (err, row) => err ? reject(err) : resolve(row || { total_30days: 0, total_global: 0 }))),
+      new Promise((resolve, reject) => db.get('SELECT trial_count, last_trial_date FROM users WHERE user_id = ?', [userId], (err, row) => err ? reject(err) : resolve(row || { trial_count: 0, last_trial_date: null })))
     ]);
 
-    // Mendapatkan username dari konteks, tidak perlu getChat khusus untuk ini
+    // ==> PERUBAHAN DIMULAI DI SINI: Ambil data akun aktif pengguna <==
+    const activeCounts = { ssh: 0, vmess: 0, vless: 0, trojan: 0 };
+    const fixed = await new Promise((res,rej)=>db.all("SELECT lower(protocol) as protocol, COUNT(*) as count FROM created_accounts WHERE created_by_user_id = ? AND is_active = 1 AND expiry_date > datetime('now','localtime') GROUP BY protocol", [userId], (e,r)=>e?rej(e):res(r||[])));
+    const payg = await new Promise((res,rej)=>db.all("SELECT lower(protocol) as protocol, COUNT(*) as count FROM payg_sessions WHERE user_id = ? AND is_active = 1 GROUP BY protocol", [userId], (e,r)=>e?rej(e):res(r||[])));
+    
+    fixed.forEach(p => { if (activeCounts.hasOwnProperty(p.protocol)) activeCounts[p.protocol] += p.count; });
+    payg.forEach(p => { if (activeCounts.hasOwnProperty(p.protocol)) activeCounts[p.protocol] += p.count; });
+    
+    const activeAccountsText = `
+<blockquote><b>💡 AKUN AKTIF ANDA</b></blockquote><code> SSH   : ${activeCounts.ssh} Akun
+ VMESS : ${activeCounts.vmess} Akun
+ VLESS : ${activeCounts.vless} Akun
+ TROJAN: ${activeCounts.trojan} Akun</code>`;
+    // ==> AKHIR BLOK DATA AKUN AKTIF <==
+
     const rawUsername = ctx.from.username || ctx.from.first_name || `User${userId}`;
     const usernameLink = `<a href="tg://user?id=${userId}">${escapeHtml(rawUsername)}</a>`;
     const formattedSaldo = userData.saldo.toLocaleString('id-ID');
-
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
     const isReseller = userData.role === 'reseller';
-    const dailyLimit = isReseller ? 20 : 5; // Sesuai kode asli
-    
+    const dailyLimit = isReseller ? 20 : 5;
     let usedTrials = 0;
     if (trialData.last_trial_date === today) {
       usedTrials = trialData.trial_count;
     }
 
-    let rankingText = '⚠️ Tidak ada data ranking.';
-    if (ranking && ranking.length > 0) {
-      rankingText = ranking.map((user, index) => {
-        const cleanedUser = cleanUsername(user.username) || `ID:${user.user_id}`; // Asumsikan cleanUsername terdefinisi
-        const medals = ["🥇", "🥈", "🥉"];
-        return `${medals[index] || '➥'} ${escapeHtml(cleanedUser)}: ${user.accounts_created_30days} akun`;
-      }).join('\n');
-    }
-
-    // Keyboard tetap sama seperti kode asli Anda
-const keyboard = [
-    [
-        { text: '🛰️ PANEL SERVER', callback_data: 'panel_server_start' },
-        { text: '💰 TOPUP SALDO', callback_data: 'topup_saldo' }
-    ],
-    [
-       { text: '🗂️ KELOLA AKUN', callback_data: 'my_accounts_list' }
-    ],
-    [ 
-       
-        { text: 'REFRESH', callback_data: 'refresh_menu' }
-    ]
-];
-
+    const keyboard = [
+        [{ text: '🛰️ PANEL SERVER', callback_data: 'panel_server_start' }, { text: '💰 TOPUP SALDO', callback_data: 'topup_saldo' }],
+        [{ text: '🗂️ KELOLA AKUN', callback_data: 'my_accounts_list' }],
+        [{ text: 'REFRESH', callback_data: 'refresh_menu' }]
+    ];
     if (isAdmin) {
-      keyboard.push([ 
-        { text: '⚙️ ADMIN', callback_data: 'admin_menu' },
-        { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }
-      ]);
+      keyboard.push([{ text: '⚙️ ADMIN', callback_data: 'admin_menu' }, { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }]);
     }
 
-    // messageText tetap sama seperti kode asli Anda
+    // ==> MODIFIKASI Tampilan Pesan Utama <==
     const messageText = `
 <code><b>═══════════════════════════════</b></code>
-               ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
+                ≡ <b>🇷​​​​​🇾​​​​​🇾​​​​​🇸​​​​​🇹​​​​​🇴​​​​​🇷​​​​​🇪​​​​</b> ≡
 <code><b>═══════════════════════════════</b></code>
   <code><b>Server Tersedia:</b></code> ${serverCount}
   <code><b>Total Pengguna:</b></code> ${userCount}
-  <code><b>Akun (30 Hari):</b></code> ${accountStats.total_30days}
-  <code><b>Akun Global:</b></code> ${accountStats.total_global}
+  <code><b>Akun (30 Hari):</b></code> ${accountStats.total_30days || 0}
+  <code><b>Akun Global:</b></code> ${accountStats.total_global || 0}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 <blockquote><b> TRIAL ${dailyLimit}X DALAM SEHARI</b></blockquote><b><code>MxTrial:</code></b> <b><code>${usedTrials}/${dailyLimit}</code></b>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
@@ -1976,27 +2043,24 @@ const keyboard = [
   <code><b>ID Anda:</b></code> <code>${userId}</code>
   <code><b>Status:</b></code> <code><b>${userData.role === 'reseller' ? 'Reseller 🛒' : 'Member 👤'}</b></code>
 <blockquote><code><b>SALDO ANDA:</b></code> Rp <code>${formattedSaldo}</code></blockquote>
-<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
-<blockquote><code>🏆</code> <code><b>TOP 3 CREATE AKUN (30 HARI)</b></code></blockquote><code>${rankingText}</code>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>${activeAccountsText}
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 <code><b>CHAT OWNER:</b></code> <a href="tg://user?id=7251232303">RyyStore</a>
 ☏ <a href="https://wa.me/6287767287284">WhatsApp</a>
 <b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
 Silakan pilih opsi layanan:`;
 
+    // ... (Sisa dari fungsi ini untuk mengirim/mengedit pesan tetap sama persis) ...
     let sentMessageInfo;
     const messageOptions = {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: keyboard },
         disable_web_page_preview: true
     };
-
     if (ctx.callbackQuery) { 
         try {
-            // Menggunakan retry untuk editMessageText
             sentMessageInfo = await callTelegramApiWithRetry(() => ctx.editMessageText(messageText, messageOptions));
         } catch (e) {
-            // Jika edit gagal (misal pesan tidak berubah atau sudah dihapus), coba hapus pesan lama (jika ada) dan kirim baru
             console.warn(`[sendMainMenu] Gagal editMessageText untuk user ${userId} (mungkin pesan sama atau tidak ada): ${e.message}. Mencoba kirim baru.`);
             if (userMessages[userId]) { 
                 try { 
@@ -2006,45 +2070,35 @@ Silakan pilih opsi layanan:`;
                     console.warn(`[sendMainMenu] Gagal menghapus pesan lama (userMessages[${userId}]) untuk user ${userId} setelah edit gagal: ${delErr.message}`);
                 }
             }
-            // Menggunakan retry untuk ctx.reply sebagai fallback
             sentMessageInfo = await callTelegramApiWithRetry(() => ctx.reply(messageText, messageOptions));
         }
     } else { 
-        // Jika dipanggil dari command (/menu, /start)
         if (userMessages[userId]) {
             try { 
-                // Menggunakan retry untuk deleteMessage
                 await callTelegramApiWithRetry(() => ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId])); 
                 delete userMessages[userId];
             } catch (error) {
                 console.warn(`[sendMainMenu] Gagal menghapus pesan lama (userMessages[${userId}]) untuk user ${userId} dari command: ${error.message}`);
             }
         }
-        // Menggunakan retry untuk ctx.reply
         sentMessageInfo = await callTelegramApiWithRetry(() => ctx.reply(messageText, messageOptions));
     }
     
-    if (sentMessageInfo) { // sentMessageInfo bisa jadi hasil dari editMessageText atau reply
-        // Telegraf mengembalikan true untuk editMessageText yang berhasil, atau objek pesan untuk reply.
-        // Kita perlu message_id untuk disimpan.
+    if (sentMessageInfo) {
         if (sentMessageInfo.message_id) {
              userMessages[userId] = sentMessageInfo.message_id;
-        } else if (typeof sentMessageInfo === 'object' && sentMessageInfo.result && sentMessageInfo.result.message_id) { // Untuk beberapa metode API Telegraf
+        } else if (typeof sentMessageInfo === 'object' && sentMessageInfo.result && sentMessageInfo.result.message_id) {
             userMessages[userId] = sentMessageInfo.result.message_id;
         } else if (ctx.callbackQuery && sentMessageInfo === true) {
-            // Jika edit berhasil, message_id tidak berubah, jadi kita ambil dari callbackQuery
             userMessages[userId] = ctx.callbackQuery.message.message_id;
         }
-        // Jika sentMessageInfo bukan objek pesan atau boolean true, mungkin ada yang salah, tapi kita coba log.
-        // console.log('[sendMainMenu] sentMessageInfo:', sentMessageInfo);
     }
 
-  } catch (error) { // Menangkap error dari DB atau error Telegram API yang tidak bisa di-retry
+  } catch (error) {
     console.error('Error di sendMainMenu:', error.stack);
     try {
-        // Menggunakan retry untuk mengirim pesan fallback
         await callTelegramApiWithRetry(() => ctx.reply('Terjadi kesalahan. Coba /menu lagi.', {
-        reply_markup: { // Keyboard fallback minimal
+        reply_markup: {
             inline_keyboard: [
             [{ text: '🛰️ PANEL SERVER', callback_data: 'panel_server_start' }],
             [{ text: 'REFRESH', callback_data: 'refresh_menu' }]
