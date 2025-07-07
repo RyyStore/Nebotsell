@@ -5923,50 +5923,42 @@ bot.on('text', async (ctx) => {
     // ==========================================================
     // ALUR 1: TOP UP SALDO
     // ==========================================================
-    if (state.step === 'topup_enter_amount') {
-        const amountText = ctx.message.text.trim();
-        let userTypedAmountMessageId = ctx.message.message_id;
-        let botPromptMessageId = userState[userId] ? userState[userId].lastBotMessageId : null;
+    
+if (state.step === 'topup_enter_amount') {
+    const amountText = ctx.message.text.trim();
+    let userTypedAmountMessageId = ctx.message.message_id;
+    let botPromptMessageId = userState[userId] ? userState[userId].lastBotMessageId : null;
 
-        // Hapus pesan-pesan terkait input top-up agar tampilan lebih bersih
-        if (botPromptMessageId) {
-            try { await ctx.telegram.deleteMessage(ctx.chat.id, botPromptMessageId); } catch (e) { /* Abaikan error */ }
-        }
-        if (userTypedAmountMessageId) {
-            try { await ctx.telegram.deleteMessage(ctx.chat.id, userTypedAmountMessageId); } catch (e) { /* Abaikan error */ }
-        }
-        if (userState[userId]) userState[userId].lastBotMessageId = null;
+    // Hapus pesan-pesan sebelumnya
+    if (botPromptMessageId) { try { await ctx.telegram.deleteMessage(ctx.chat.id, botPromptMessageId); } catch (e) {} }
+    if (userTypedAmountMessageId) { try { await ctx.telegram.deleteMessage(ctx.chat.id, userTypedAmountMessageId); } catch (e) {} }
+    if (userState[userId]) userState[userId].lastBotMessageId = null;
 
-        // Validasi input nominal top-up
-        if (!/^\d+$/.test(amountText)) {
-            delete userState[userId]; // Bersihkan state jika input tidak valid
-            await ctx.reply('⚠️ Jumlah top-up tidak valid. Hanya masukkan angka.\nSilakan ulangi dari menu /menu.');
-            return sendMainMenu(ctx); // Kembali ke menu utama
-        }
+    if (!/^\d+$/.test(amountText)) {
+        delete userState[userId];
+        await ctx.reply('⚠️ Jumlah top-up tidak valid. Hanya masukkan angka.');
+        return sendMainMenu(ctx);
+    }
 
-        const amount = parseInt(amountText, 10);
-        const minGeneralTopUp = await getMinGeneralTopUp(); // Dapatkan minimal top-up dari DB
+    const amount = parseInt(amountText, 10);
+    const minGeneralTopUp = await getMinGeneralTopUp();
 
-        if (amount < minGeneralTopUp) {
-            delete userState[userId];
-            await ctx.reply(`⚠️ Jumlah top-up minimal adalah Rp${minGeneralTopUp.toLocaleString('id-ID')}.\nSilakan ulangi dari menu /menu.`);
-            return sendMainMenu(ctx);
-        }
-        if (amount > 5000000) {
-            delete userState[userId];
-            await ctx.reply('⚠️ Jumlah top-up maksimal adalah Rp5.000.000.\nSilakan ulangi dari menu /menu.');
-            return sendMainMenu(ctx);
-        }
+    if (amount < minGeneralTopUp) {
+        delete userState[userId];
+        await ctx.reply(`⚠️ Jumlah top-up minimal adalah Rp${minGeneralTopUp.toLocaleString('id-ID')}.`);
+        return sendMainMenu(ctx);
+    }
+    if (amount > 5000000) {
+        delete userState[userId];
+        await ctx.reply('⚠️ Jumlah top-up maksimal adalah Rp5.000.000.');
+        return sendMainMenu(ctx);
+    }
 
-        // Tambahkan suffix unik untuk PayDisini
-        const minRandom = 10;
-        const maxRandom = 999;
-        const randomSuffix = Math.floor(Math.random() * (maxRandom - minRandom + 1) + minRandom);
-        const uniqueAmount = amount + randomSuffix;
-        const usernameForDisplay = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || `User${userId}`);
+    const randomSuffix = Math.floor(Math.random() * 900) + 100;
+    const uniqueAmount = amount + randomSuffix;
+    const usernameForDisplay = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || `User${userId}`);
 
-        // Buat caption QRIS
-        const qrisCaption = `
+    const qrisCaption = `
 <b>TOP UP SALDO - SCAN QRIS</b>
 ──────────────────────
  User: ${usernameForDisplay}
@@ -5975,67 +5967,59 @@ bot.on('text', async (ctx) => {
 <b>JUMLAH PEMBAYARAN:</b>
 <code>Rp ${uniqueAmount.toLocaleString('id-ID')}</code>
 ──────────────────────
-⚠️ <i>Transfer <b>OTOMATIS SESUAI</b> nominal
+⚠️ <i>Transfer <b>TEPAT SESUAI</b> nominal
  di atas agar saldo masuk otomatis.</i>
 
-⏳ Batas Pembayaran: <code>${new Date(Date.now() + 4 * 60000).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</code>
+⏳ Batas Pembayaran: <code>15 Menit</code>
 ──────────────────────
 Silakan scan QRIS untuk top up.`;
 
-        let loadingQrisMsg;
-        try {
-            loadingQrisMsg = await ctx.reply('⏳ Sedang membuat kode QRIS, mohon tunggu...');
+    let loadingQrisMsg;
+    try {
+        loadingQrisMsg = await ctx.reply('⏳ Sedang membuat kode QRIS, mohon tunggu...');
 
-            // Panggil API untuk generate QRIS dinamis
-            const base64Qris = await generateDynamicQris(uniqueAmount, QRIS_STATIS_STRING);
-            const qrisBuffer = Buffer.from(base64Qris, 'base64');
+        const base64Qris = await generateDynamicQris(uniqueAmount, QRIS_STATIS_STRING);
+        const qrisBuffer = Buffer.from(base64Qris, 'base64');
 
-            // Hapus pesan loading QRIS
-            if (loadingQrisMsg) {
-                try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) { /* abaikan */}
-            }
+        if (loadingQrisMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) {} }
 
-            // Kirim gambar QRIS ke pengguna
-            const qrisPhotoMessage = await ctx.replyWithPhoto(
-                { source: qrisBuffer },
-                {
-                    caption: qrisCaption,
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '❌ Batalkan Top Up Ini', callback_data: 'cancel_topup_qris' }]
-                        ]
-                    }
+        const qrisPhotoMessage = await ctx.replyWithPhoto(
+            { source: qrisBuffer },
+            {
+                caption: qrisCaption,
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '❌ Batalkan Top Up Ini', callback_data: 'cancel_topup_qris' }]
+                    ]
                 }
-            );
-
-            // Simpan state untuk proses top-up di queue
-            userState[userId] = {
-                step: 'topup_waiting_payment',
-                uniqueAmount: uniqueAmount,
-                baseAmount: amount,
-                qrisMessageId: qrisPhotoMessage.message_id,
-                timeout: Date.now() + (4 * 60 * 1000) // Batas waktu 4 menit
-            };
-
-            // Tambahkan job ke queue untuk cek mutasi
-            await topUpQueue.add({
-                userId,
-                amount: amount,
-                uniqueAmount: uniqueAmount,
-                qrisMessageId: qrisPhotoMessage.message_id
-            });
-
-        } catch (error) {
-            console.error("Error mengirim QRIS Topup atau generate dinamis:", error.message);
-            if (loadingQrisMsg) {
-                try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) { /* abaikan */}
             }
-            await ctx.reply(`🚫 Terjadi kesalahan saat memproses permintaan top-up: ${error.message}.\nMohon coba lagi atau hubungi admin.`);
-            delete userState[userId]; // Bersihkan state jika ada error
-            return sendMainMenu(ctx); // Kembali ke menu utama
-        }
+        );
+
+        // Simpan state untuk proses top-up di queue
+        userState[userId] = {
+            step: 'topup_waiting_payment',
+            uniqueAmount: uniqueAmount,
+            baseAmount: amount,
+            qrisMessageId: qrisPhotoMessage.message_id,
+        };
+
+        // Tambahkan job ke queue untuk cek mutasi
+        await topUpQueue.add({
+            userId,
+            amount: amount,
+            uniqueAmount: uniqueAmount,
+            qrisMessageId: qrisPhotoMessage.message_id
+        });
+
+    } catch (error) {
+        console.error("Error mengirim QRIS Topup atau generate dinamis:", error.message);
+        if (loadingQrisMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingQrisMsg.message_id); } catch (e) {} }
+        await ctx.reply(`🚫 Terjadi kesalahan saat memproses permintaan top-up: ${error.message}.\nMohon coba lagi atau hubungi admin.`);
+        delete userState[userId];
+        return sendMainMenu(ctx);
     }
+}
 
     // ==========================================================
     // ALUR 2: PEMBUATAN AKUN BERLANGGANAN (FIXED-TERM)
@@ -8388,15 +8372,10 @@ topUpQueue.process(async (job) => {
     let pembayaranDiterima = false;
     const userInitialState = userState[userId]; // Ambil state user saat ini
 
-    // Tentukan batas waktu tunggu pembayaran
-    const timeout = (userInitialState &&
-                     userInitialState.step === 'topup_waiting_payment' &&
-                     userInitialState.uniqueAmount === uniqueAmount &&
-                     userInitialState.qrisMessageId === qrisMessageId)
-                    ? userInitialState.timeout // Gunakan timeout dari state jika ada dan cocok
-                    : Date.now() + (3.8 * 60 * 1000); // Default timeout jika state tidak cocok
+    // Tentukan batas waktu tunggu pembayaran. Gunakan 15 menit.
+    const timeout = Date.now() + (15 * 60 * 1000);
 
-    console.log(`[TOPUP_QUEUE] Memulai proses untuk User ${userId}, Amount: ${amount}, UniqueAmount: ${uniqueAmount}, QRIS MsgID: ${qrisMessageId}, Timeout: ${new Date(timeout).toLocaleTimeString()}`);
+    console.log(`[TOPUP_QUEUE_ORKUT] Memulai proses untuk User ${userId}, Amount: ${amount}, UniqueAmount: ${uniqueAmount}, Timeout: ${new Date(timeout).toLocaleTimeString()}`);
 
     // Loop untuk mengecek mutasi sampai timeout
     while (Date.now() < timeout) {
@@ -8405,79 +8384,82 @@ topUpQueue.process(async (job) => {
       if (currentUserStateInLoop?.step !== 'topup_waiting_payment' ||
           currentUserStateInLoop?.uniqueAmount !== uniqueAmount ||
           currentUserStateInLoop?.qrisMessageId !== qrisMessageId) {
-        console.log(`[TOPUP_QUEUE] Proses topup untuk User ${userId} (Rp ${uniqueAmount}) dihentikan. State berubah atau job tidak lagi relevan.`);
+        console.log(`[TOPUP_QUEUE_ORKUT] Proses topup untuk User ${userId} (Rp ${uniqueAmount}) dihentikan. State berubah atau job dibatalkan.`);
         return; // Keluar dari pemrosesan job ini
       }
 
-      const transaksi = await cekMutasi(uniqueAmount); // Fungsi ini harusnya punya timeout internal sendiri
-      if (transaksi) {
-        console.log(`[TOPUP_QUEUE] ✅ Pembayaran OkeConnect diterima untuk User ${userId}: Reff: ${transaksi.buyer_reff || 'N/A'}, Amount: ${transaksi.amount}`);
-        pembayaranDiterima = true; // Tandai pembayaran diterima
-
-        // Hapus pesan QRIS dengan retry
-        if (qrisMessageId) {
-          try {
-            await callTelegramApiWithRetry(() => bot.telegram.deleteMessage(userId, qrisMessageId), 2, 500); // Max 2 retries, delay 0.5s
-            console.log(`[TOPUP_QUEUE] Pesan QRIS ${qrisMessageId} untuk user ${userId} berhasil dihapus.`);
-            if (userState[userId] && userState[userId].qrisMessageId === qrisMessageId) {
-              delete userState[userId].qrisMessageId; // Bersihkan state
-            }
-          } catch (e) {
-            console.warn(`[TOPUP_QUEUE] Gagal menghapus pesan QRIS ${qrisMessageId} untuk user ${userId} setelah retry: ${e.message}`);
-            // Kegagalan menghapus pesan QRIS tidak fatal
-          }
-        }
-
-        const amountActuallyPaidByUser = parseInt(transaksi.amount); // Ini harusnya == uniqueAmount
-        const baseAmountToppedUp = amount; // Ini adalah nominal yang diinput user
-
-        let bonusAmountApplied = 0;
-        const bonusConfig = await getActiveBonusConfig(); // Pastikan fungsi ini ada
-
-        if (bonusConfig && baseAmountToppedUp >= bonusConfig.min_topup_amount) {
-          bonusAmountApplied = calculateBonusAmount(baseAmountToppedUp, bonusConfig); // Pastikan fungsi ini ada
-        }
-        
-        const totalAmountToCredit = baseAmountToppedUp + bonusAmountApplied;
-
-        // Update saldo pengguna di DB
-        await new Promise((resolve, reject) => {
-          db.run("UPDATE users SET saldo = saldo + ?, last_topup_date = datetime('now', 'localtime') WHERE user_id = ?",
-          [totalAmountToCredit, userId],
-          (err) => {
-            if (err) {
-              console.error(`[TOPUP_QUEUE] KRITIS: Gagal update saldo user ${userId} di DB setelah pembayaran diterima! Error: ${err.message}`);
-              // Ini adalah error kritis, lempar agar ditangkap oleh catch utama
-              return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
-            }
-            console.log(`[TOPUP_QUEUE] Saldo user ${userId} berhasil diupdate +${totalAmountToCredit}.`);
-            resolve();
-          });
+      // ### PERUBAHAN UTAMA: Ganti cekMutasi dengan API ORKUT ###
+      try {
+        const response = await axios.post(`https://api.xlsmart.biz.id/payment/qris/${vars.ORKUT_MERCHANT_ID}`, {
+            username: vars.ORKUT_USERNAME,
+            token: vars.ORKUT_TOKEN
         });
-        
-        // Update role pengguna (fungsi ini sudah menangani retry notifikasi internal)
-        await checkAndUpdateUserRole(userId, baseAmountToppedUp);
-        await recordUserTransaction(userId); // Catat transaksi
 
-        // Dapatkan username untuk notifikasi
-        let username = `User ${userId}`; // Fallback
-        try {
-            const userInfo = await callTelegramApiWithRetry(() => bot.telegram.getChat(userId));
-            username = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ${userId}`);
-        } catch (e) {
-            console.warn(`[TOPUP_QUEUE] Gagal mendapatkan info chat untuk ${userId} (notifikasi topup) setelah retry: ${e.message}`);
+        if (response.data && Array.isArray(response.data.data)) {
+            const paymentFound = response.data.data.find(item =>
+                (item.type === 'CR' || item.tipe === 'CR') &&
+                parseFloat(item.nominal || item.amount) === parseFloat(uniqueAmount)
+            );
+
+            if (paymentFound) {
+                console.log(`[TOPUP_QUEUE_ORKUT] ✅ Pembayaran ORKUT diterima untuk User ${userId}: Amount: ${uniqueAmount}`);
+                pembayaranDiterima = true; // Tandai pembayaran diterima
+
+                // Hapus pesan QRIS dengan retry
+                if (qrisMessageId) {
+                  try {
+                    await callTelegramApiWithRetry(() => bot.telegram.deleteMessage(userId, qrisMessageId), 2, 500);
+                  } catch (e) {
+                    console.warn(`[TOPUP_QUEUE_ORKUT] Gagal menghapus pesan QRIS ${qrisMessageId} untuk user ${userId}: ${e.message}`);
+                  }
+                }
+
+                const baseAmountToppedUp = amount; // Ini adalah nominal yang diinput user
+
+                let bonusAmountApplied = 0;
+                const bonusConfig = await getActiveBonusConfig();
+
+                if (bonusConfig && baseAmountToppedUp >= bonusConfig.min_topup_amount) {
+                  bonusAmountApplied = calculateBonusAmount(baseAmountToppedUp, bonusConfig);
+                }
+                
+                const totalAmountToCredit = baseAmountToppedUp + bonusAmountApplied;
+
+                // Update saldo pengguna di DB
+                await new Promise((resolve, reject) => {
+                  db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
+                    if (err) return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
+                    resolve();
+                  });
+                });
+                
+                // Update role dan kirim notifikasi
+                await checkAndUpdateUserRole(userId, baseAmountToppedUp);
+                await recordUserTransaction(userId);
+
+                let username = `User ${userId}`;
+                try {
+                    const userInfo = await callTelegramApiWithRetry(() => bot.telegram.getChat(userId));
+                    username = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ${userId}`);
+                } catch (e) {
+                    console.warn(`[TOPUP_QUEUE_ORKUT] Gagal mendapatkan info chat untuk ${userId}: ${e.message}`);
+                }
+                
+                await sendUserNotificationTopup(userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+                await sendAdminNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+                await sendGroupNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+
+                await sendMainMenuToUser(userId);
+
+                break; // Keluar dari loop while karena pembayaran sudah diproses
+            }
         }
-        
-        // Kirim notifikasi (fungsi notifikasi ini harusnya sudah pakai retry internal)
-        await sendUserNotificationTopup(userId, baseAmountToppedUp, amountActuallyPaidByUser, bonusAmountApplied);
-        await sendAdminNotificationTopup(username, userId, baseAmountToppedUp, amountActuallyPaidByUser, bonusAmountApplied);
-        await sendGroupNotificationTopup(username, userId, baseAmountToppedUp, amountActuallyPaidByUser, bonusAmountApplied);
-
-        await sendMainMenuToUser(userId); // Kirim menu utama (fungsi ini juga harusnya pakai retry internal)
-
-        break; // Keluar dari loop while karena pembayaran sudah diproses
+      } catch(apiError) {
+          console.error(`[TOPUP_QUEUE_ORKUT] Gagal mengambil mutasi ORKUT: ${apiError.message}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, 10000)); // Tunggu 10 detik sebelum cek mutasi lagi
+      // ### AKHIR PERUBAHAN ###
+
+      await new Promise((resolve) => setTimeout(resolve, 20000)); // Tunggu 20 detik sebelum cek mutasi lagi
     } // Akhir loop while
 
     // Jika loop selesai dan pembayaran tidak diterima (timeout)
@@ -8488,58 +8470,44 @@ topUpQueue.process(async (job) => {
           finalUserStateBeforeTimeout?.uniqueAmount === uniqueAmount &&
           finalUserStateBeforeTimeout?.qrisMessageId === qrisMessageId) {
         
-        console.log(`[TOPUP_QUEUE] 🚫 Pembayaran OkeConnect tidak ditemukan untuk User ${userId} (Rp ${uniqueAmount}, QRIS msg: ${qrisMessageId}) - TIMEOUT SERVER.`);
+        console.log(`[TOPUP_QUEUE_ORKUT] 🚫 Pembayaran tidak ditemukan untuk User ${userId} (Rp ${uniqueAmount}) - TIMEOUT.`);
         if (qrisMessageId) {
           try {
             await callTelegramApiWithRetry(() => bot.telegram.deleteMessage(userId, qrisMessageId), 2, 500);
-            console.log(`[TOPUP_QUEUE] Pesan QRIS ${qrisMessageId} untuk user ${userId} dihapus karena timeout.`);
-            if (userState[userId] && userState[userId].qrisMessageId === qrisMessageId) {
-              delete userState[userId].qrisMessageId;
-            }
           } catch (e) {
-            console.warn(`[TOPUP_QUEUE] Gagal hapus pesan QRIS ${qrisMessageId} (timeout server) untuk user ${userId} setelah retry: ${e.message}`);
+            console.warn(`[TOPUP_QUEUE_ORKUT] Gagal hapus pesan QRIS (timeout) untuk user ${userId}: ${e.message}`);
           }
         }
         try {
-            await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, '🚫 TopUp QRIS Gagal karena melewati batas waktu pembayaran. Jika Anda sudah terlanjur transfer, saldo akan dicek manual oleh admin dalam 1x24 jam.', { parse_mode: 'Markdown' }));
-        } catch (e) { console.error(`[TOPUP_QUEUE] Gagal kirim notif timeout pembayaran ke ${userId} setelah retry: ${e.message}`); }
+            await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, '🚫 TopUp QRIS Gagal karena melewati batas waktu pembayaran. Jika Anda sudah terlanjur transfer, saldo akan dicek manual oleh admin.', { parse_mode: 'Markdown' }));
+        } catch (e) { console.error(`[TOPUP_QUEUE_ORKUT] Gagal kirim notif timeout ke ${userId}: ${e.message}`); }
         
-        try { await sendMainMenuToUser(userId); } // Kirim menu utama
-        catch (e) { console.error(`[TOPUP_QUEUE] Gagal sendMainMenuToUser ke ${userId} setelah timeout topup dan retry: ${e.message}`); }
-      } else {
-        console.log(`[TOPUP_QUEUE] Proses timeout untuk User ${userId} (Rp ${uniqueAmount}) tidak dilanjutkan. State user saat ini (${JSON.stringify(finalUserStateBeforeTimeout)}) tidak cocok dengan job data (uniqueAmount=${uniqueAmount}, qrisMessageId=${qrisMessageId}).`);
+        try { await sendMainMenuToUser(userId); }
+        catch (e) { console.error(`[TOPUP_QUEUE_ORKUT] Gagal sendMainMenuToUser ke ${userId} setelah timeout: ${e.message}`); }
       }
     }
-  } catch (error) { // Catch untuk error KRITIS (misal DB gagal update saldo SETELAH pembayaran diterima)
-    console.error(`[TOPUP_QUEUE] 🚫 Kesalahan KRITIS dalam pemrosesan top-up untuk User ${userId} (UniqueAmount: ${uniqueAmount}, QRIS msg: ${qrisMessageId}):`, error.message, error.stack ? error.stack : '');
+  } catch (error) { // Catch untuk error KRITIS
+    console.error(`[TOPUP_QUEUE_ORKUT] 🚫 Kesalahan KRITIS untuk User ${userId} (Rp ${uniqueAmount}):`, error.message);
     
     const latestUserStateOnError = userState[userId];
-    // Hanya kirim pesan error jika konteks masih relevan
-    if (userId && 
-        ( (latestUserStateOnError?.qrisMessageId === qrisMessageId && latestUserStateOnError?.uniqueAmount === uniqueAmount) || 
-          (!latestUserStateOnError && qrisMessageId && uniqueAmount) ) // State mungkin sudah dihapus tapi ini error dari job yang bersangkutan
-       ) {
+    if (userId && (latestUserStateOnError?.uniqueAmount === uniqueAmount || !latestUserStateOnError)) {
       try {
-        await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, '🚫 Terjadi kesalahan sistem saat memproses topup Anda. Dana Anda AMAN jika sudah transfer, namun status mungkin belum terupdate. Mohon hubungi Admin.', { parse_mode: 'Markdown' }));
+        await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, '🚫 Terjadi kesalahan sistem. Dana Anda AMAN jika sudah transfer. Mohon hubungi Admin.', { parse_mode: 'Markdown' }));
         await sendMainMenuToUser(userId);
       } catch(e){
-        console.warn(`[TOPUP_QUEUE] Gagal mengirim pesan error sistem / menu ke user ${userId} setelah retry: ${e.message}`);
+        console.warn(`[TOPUP_QUEUE_ORKUT] Gagal mengirim pesan error sistem ke user ${userId}: ${e.message}`);
       }
     }
   } finally {
     // Bersihkan state user HANYA jika state tersebut masih berkaitan dengan job yang baru selesai diproses
     const latestUserStateAfterJob = userState[userId];
-    if (latestUserStateAfterJob &&
-        latestUserStateAfterJob.uniqueAmount === uniqueAmount &&
-        (latestUserStateAfterJob.qrisMessageId === qrisMessageId || !latestUserStateAfterJob.qrisMessageId) // qrisMessageId bisa jadi sudah dihapus
-       ) {
-      delete userState[userId]; // Hapus state spesifik transaksi ini
-      console.log(`[TOPUP_QUEUE] State untuk user ${userId} (Rp ${uniqueAmount}, QRIS msg: ${qrisMessageId}) dibersihkan setelah job selesai.`);
-    } else {
-      console.log(`[TOPUP_QUEUE] State untuk user ${userId} tidak dibersihkan karena tidak lagi cocok dengan job yang selesai (Rp ${uniqueAmount}, QRIS msg: ${qrisMessageId}). State saat ini: ${JSON.stringify(latestUserStateAfterJob)}`);
+    if (latestUserStateAfterJob && latestUserStateAfterJob.uniqueAmount === uniqueAmount) {
+      delete userState[userId];
+      console.log(`[TOPUP_QUEUE_ORKUT] State untuk user ${userId} (Rp ${uniqueAmount}) dibersihkan.`);
     }
   }
 });
+
 
 
 async function getMinGeneralTopUp() {
@@ -8579,62 +8547,121 @@ async function initializeDefaultSettings() {
     await getMinResellerUpgradeTopUp(); // Sama seperti di atas
     console.log("Inisialisasi pengaturan minimal top-up selesai.");
 }
-// Panggil initializeDefaultSettings() di bagian startup bot Anda, misalnya sebelum app.listen atau bot.launch
-// Contoh:
-// db.serialize(() => {
-//   ... pembuatan tabel ...
-//   initializeDefaultSettings(); // Panggil di sini
-// });
 
+const activePolls = new Map(); 
 
-// Fungsi untuk mengecek mutasi transaksi dari OkeConnect
-async function cekMutasi(expectedAmount, maxWaitTime = 140000, interval = 5000) {
-  try {
+/**
+ * Memeriksa status pembayaran di API mutasi ORKUT.
+ * @param {object} ctx - Konteks Telegraf.
+ * @param {number} userId - ID pengguna.
+ * @param {number} uniqueAmount - Jumlah unik yang harus dicari.
+ * @param {number} baseAmount - Jumlah asli sebelum kode unik.
+ * @param {number} qrisMessageId - ID pesan QRIS untuk dihapus.
+ */
+async function checkOrkutPaymentStatus(ctx, userId, uniqueAmount, baseAmount, qrisMessageId) {
+    const pollId = `${userId}-${uniqueAmount}`;
+    if (activePolls.has(pollId)) return; // Hindari polling ganda
+
+    const ORKUT_API_URL = `https://api.xlsmart.biz.id/payment/qris/${vars.ORKUT_MERCHANT_ID}`;
+    const maxDurationMs = 15 * 60 * 1000; // Batas waktu 15 menit
+    const interval = 20000; // Cek setiap 20 detik
     const startTime = Date.now();
-    const apiKey = vars.OKE_API_KEY;
-    const IdMerch = vars.OKE_API_BASE;
-    const url = `https://gateway.okeconnect.com/api/mutasi/qris/${IdMerch}/${apiKey}`;
 
-    console.log(`🔄 Mengakses API: ${url}`);
-
-    while (Date.now() - startTime < maxWaitTime) {
-      try {
-        const response = await axios.get(url, { 
-          timeout: 10000,
-          validateStatus: function (status) {
-            return status >= 200 && status < 500; // Terima semua response < 500
-          }
-        });
-
-        if (response.data && response.data.status === 'success' && Array.isArray(response.data.data)) {
-          const mutasiTerbaru = response.data.data.find(item => 
-            item.type === 'CR' && 
-            parseInt(item.amount) === parseInt(expectedAmount)
-          );
-
-          if (mutasiTerbaru) {
-            console.log(`✅ Pembayaran ditemukan: Rp${mutasiTerbaru.amount}`);
-            return mutasiTerbaru;
-          }
+    const pollingLoop = async () => {
+        if (!activePolls.has(pollId)) {
+            console.log(`[ORKUT_POLL] Polling untuk ${pollId} dihentikan (dibatalkan).`);
+            return;
         }
-      } catch (err) {
-        console.error('🚫 Gagal mengambil mutasi:', err.message);
-        // Tidak throw error, tapi lanjutkan loop
-      }
 
-      await new Promise(resolve => setTimeout(resolve, interval));
-    }
+        if (Date.now() - startTime > maxDurationMs) {
+            console.log(`[ORKUT_POLL] Polling untuk ${pollId} timeout.`);
+            activePolls.delete(pollId);
+            try { await ctx.telegram.deleteMessage(userId, qrisMessageId); } catch (e) {}
+            await ctx.telegram.sendMessage(userId, '🚫 TopUp QRIS Gagal karena melewati batas waktu pembayaran.');
+            return sendMainMenu(ctx);
+        }
 
-    return null;
-  } catch (error) {
-    console.error('🚫 Kesalahan fatal saat mengambil mutasi:', error);
-    return null;
-  }
+        try {
+            const response = await axios.post(ORKUT_API_URL, {
+                username: vars.ORKUT_USERNAME,
+                token: vars.ORKUT_TOKEN
+            });
+
+            if (response.data && Array.isArray(response.data.data)) {
+                const paymentFound = response.data.data.find(item =>
+                    (item.type === 'CR' || item.tipe === 'CR') &&
+                    parseFloat(item.nominal || item.amount) === parseFloat(uniqueAmount)
+                );
+
+                if (paymentFound) {
+                    console.log(`[ORKUT_POLL] ✅ Pembayaran ditemukan untuk ${pollId}`);
+                    activePolls.delete(pollId);
+
+                    try { await ctx.telegram.deleteMessage(userId, qrisMessageId); } catch (e) {}
+
+                    const bonusConfig = await getActiveBonusConfig();
+                    let bonusAmountApplied = 0;
+                    if (bonusConfig && baseAmount >= bonusConfig.min_topup_amount) {
+                        bonusAmountApplied = calculateBonusAmount(baseAmount, bonusConfig);
+                    }
+                    const totalAmountToCredit = baseAmount + bonusAmountApplied;
+
+                    await new Promise((resolve, reject) => {
+                        db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
+                            if (err) return reject(err);
+                            resolve();
+                        });
+                    });
+
+                    await checkAndUpdateUserRole(userId, baseAmount);
+                    await recordUserTransaction(userId);
+                    
+                    const username = (await bot.telegram.getChat(userId)).username || `User ${userId}`;
+                    await sendUserNotificationTopup(userId, baseAmount, uniqueAmount, bonusAmountApplied);
+                    await sendAdminNotificationTopup(username, userId, baseAmount, uniqueAmount, bonusAmountApplied);
+                    await sendGroupNotificationTopup(username, userId, baseAmount, uniqueAmount, bonusAmountApplied);
+                    return sendMainMenu(ctx);
+                }
+            }
+        } catch (error) {
+            console.error(`[ORKUT_POLL] Error saat polling untuk ${pollId}:`, error.message);
+        }
+        
+        // Jadwalkan pengecekan berikutnya jika masih aktif
+        if (activePolls.has(pollId)) {
+            const timeoutId = setTimeout(pollingLoop, interval);
+            activePolls.set(pollId, timeoutId);
+        }
+    };
+
+    activePolls.set(pollId, setTimeout(pollingLoop, 5000)); // Mulai polling setelah 5 detik
 }
 
+// Handler untuk tombol "Batalkan Top Up"
+bot.action('cancel_topup_qris', async (ctx) => {
+    const userId = ctx.from.id;
+    const state = userState[userId];
 
-
-
+    if (state && state.step === 'topup_waiting_payment') {
+        // Hapus state untuk memberi sinyal pada queue agar berhenti
+        delete userState[userId]; 
+        
+        await ctx.answerCbQuery('Permintaan top-up dibatalkan.');
+        try {
+            // Hapus pesan QRIS yang sedang ditampilkan
+            await ctx.deleteMessage(); 
+        } catch (e) {
+            console.warn("Gagal hapus pesan QRIS saat batal:", e.message);
+        }
+        
+        await ctx.reply("Top-up dibatalkan. Kembali ke menu utama.");
+        await sendMainMenu(ctx);
+    } else {
+        await ctx.answerCbQuery('Tidak ada top-up aktif untuk dibatalkan.', { show_alert: true });
+        try { await ctx.deleteMessage(); } catch(e){}
+        await sendMainMenu(ctx);
+    }
+});
 
 bot.action('send_main_menu', async (ctx) => {
   console.log('Tombol Kembali ke Menu Utama diklik oleh:', ctx.from.id);
