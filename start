@@ -11,6 +11,7 @@ purple="\e[38;5;141m"
 bold_white="\e[1;37m"
 reset="\e[0m"
 pink="\e[38;5;205m"
+
 print_rainbow() {
     local text="$1"
     local length=${#text}
@@ -37,6 +38,7 @@ print_rainbow() {
     done
     echo -e "$reset"
 }
+
 cek_status() {
     status=$(systemctl is-active --quiet $1 && echo "aktif" || echo "nonaktif")
     if [ "$status" = "aktif" ]; then
@@ -48,8 +50,8 @@ cek_status() {
 
 setup_bot() {
 	NODE_VERSION=$(node -v 2>/dev/null | grep -oP '(?<=v)\d+' || echo "0")
-	rm /var/lib/dpkg/stato*
-	rm /var/lib/dpkg/lock*
+	rm /var/lib/dpkg/stato* >/dev/null 2>&1
+	rm /var/lib/dpkg/lock* >/dev/null 2>&1
 
 	if [ "$NODE_VERSION" -lt 22 ]; then
 		echo -e "${yellow}Installing or upgrading Node.js to version 22...${neutral}"
@@ -65,7 +67,7 @@ setup_bot() {
     fi
 
     if ! npm list --prefix /root/Nebotsell express telegraf axios moment sqlite3 >/dev/null 2>&1; then
-        npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv
+        npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv moment bcrypt cors express-session session-file-store exceljs qrcode async-mutex bull
     fi
 
     if [ -n "$(ls -A /root/Nebotsell)" ]; then
@@ -76,83 +78,70 @@ setup_bot() {
 server_app() {
     clear
     print_rainbow ─────────────────────────────────────────
-    echo -e "    .:::.  NEBOT SELLVPN TELEGRAM  .:::.   " | lolcat
+    echo -e "     .:::.   RYYSTORE BOT RESELL TELEGRAM   .:::.   " | lolcat
     print_rainbow ─────────────────────────────────────────
     echo -e "       ${blue}•${neutral} server create user"
     echo -e "       ${blue}•${neutral} server renew user"
     echo -e "       ${blue}•${neutral} server ceksaldo user"
     echo -e "       ${blue}•${neutral} server Topup Otomatis"
     print_rainbow ─────────────────────────────────────────
+
+    # --- Standard Prompts ---
     read -p "Masukkan token bot: " token
     while [ -z "$token" ]; do
-        read -p "Masukkan token bot: " token
-        if [ -z "$token" ]; then
-            echo -e "${red}Token bot tidak boleh kosong. Silakan coba lagi.${neutral}"
-        fi
+        read -p "Token bot tidak boleh kosong. Masukkan lagi: " token
     done
+
+    read -p "Masukkan admin ID: " adminid
     while [ -z "$adminid" ]; do
-        read -p "Masukkan admin ID: " adminid
-        if [ -z "$adminid" ]; then
-            echo -e "${red}Admin ID tidak boleh kosong. Silakan coba lagi.${neutral}"
-        fi
+        read -p "Admin ID tidak boleh kosong. Masukkan lagi: " adminid
     done
-        while [ -z "$namastore" ]; do
-        read -p "Masukkan nama store: " namastore
-        if [ -z "$namastore" ]; then
-            echo -e "${red}Nama store tidak boleh kosong. Silakan coba lagi.${neutral}"
-        fi
+
+    read -p "Masukkan nama store: " namastore
+    while [ -z "$namastore" ]; do
+        read -p "Nama store tidak boleh kosong. Masukkan lagi: " namastore
     done
-	
-	while [ -z "$mcid" ]; do
-		read -p "Masukkan Merchant Code: " mcid
-		if [ -z "$mcid" ]; then
-			while true; do
-				read -p "Merchant Code Kosong. Topup Otomatis tidak dapat dilakukan. Apakah Anda ingin melanjutkan? (Y/N): " confirm
-				if [[ "$confirm" =~ ^[Yy]$ ]]; then
-					break 2  # Langsung lanjut ke tahap berikutnya
-				elif [[ "$confirm" =~ ^[Nn]$ ]]; then
-					echo "Silakan masukkan Merchant Code lagi."
-					mcid=""  # Reset mcid agar loop utama meminta input ulang
-					break
-				else
-					echo "Input tidak valid. Masukkan Y atau N."
-				fi
-			done
-		fi
-	done
 
-	while [ -z "$keypaydisini" ]; do
-		read -p "Masukkan API KEY: " keypaydisini
-		if [ -z "$keypaydisini" ]; then
-			while true; do
-				read -p "API KEY Kosong. Topup Otomatis tidak dapat dilakukan. Apakah Anda ingin melanjutkan? (Y/N): " confirm
-				if [[ "$confirm" =~ ^[Yy]$ ]]; then
-					break 2  # Langsung lanjut ke tahap berikutnya
-				elif [[ "$confirm" =~ ^[Nn]$ ]]; then
-					echo "Silakan masukkan API KEY lagi."
-					keypaydisini=""  # Reset keypaydisini agar loop utama meminta input ulang
-					break
-				else
-					echo "Input tidak valid. Masukkan Y atau N."
-				fi
-			done
-		fi
-	done
+    # --- New ORKUT Prompts ---
+    echo -e "${yellow}--- PENGATURAN TOP UP QRIS (ORKUT) ---${neutral}"
+    read -p "Masukkan ORKUT Merchant ID (cth: OK123456): " orkut_merchant_id
+    while [ -z "$orkut_merchant_id" ]; do
+        read -p "ORKUT Merchant ID tidak boleh kosong. Masukkan lagi: " orkut_merchant_id
+    done
 
+    read -p "Masukkan ORKUT Username: " orkut_username
+    while [ -z "$orkut_username" ]; do
+        read -p "ORKUT Username tidak boleh kosong. Masukkan lagi: " orkut_username
+    done
 
+    read -p "Masukkan ORKUT Token (dari login Google): " orkut_token
+    while [ -z "$orkut_token" ]; do
+        read -p "ORKUT Token tidak boleh kosong. Masukkan lagi: " orkut_token
+    done
+
+    read -p "Masukkan String QRIS Statis Anda: " qris_statis_string
+    while [ -z "$qris_statis_string" ]; do
+        read -p "String QRIS Statis tidak boleh kosong. Masukkan lagi: " qris_statis_string
+    done
+
+    # --- Create .vars.json ---
     rm -f /root/Nebotsell/.vars.json
     echo "{
   \"BOT_TOKEN\": \"$token\",
   \"USER_ID\": \"$adminid\",
-  \"OKE_API_BASE\": \"$mcid\",
-  \"OKE_API_KEY\": \"$keypaydisini\",
   \"NAMA_STORE\": \"$namastore\",
-  \"PORT\": \"50123\"
+  \"PORT\": \"50123\",
+  \"ORKUT_MERCHANT_ID\": \"$orkut_merchant_id\",
+  \"ORKUT_USERNAME\": \"$orkut_username\",
+  \"ORKUT_TOKEN\": \"$orkut_token\",
+  \"QRIS_STATIS_STRING\": \"$qris_statis_string\"
 }" >/root/Nebotsell/.vars.json
+
+    # --- Systemd and Cron setup ---
     cat >/etc/systemd/system/sellvpn.service <<EOF
 [Unit]
 Description=App NebotSell Service
-Telegram : https://t.me/newbie_store24
+Telegram : https://t.me/RyyStorevp1
 After=network.target
 
 [Service]
@@ -187,7 +176,7 @@ EOF
     systemctl restart sellvpn.service >/dev/null 2>&1
     service cron restart
     printf "\033[5A\033[0J"
-    echo -e "       Status Server is "$(cek_status sellvpn.service)""
+    echo -e "       Status Server is $(cek_status sellvpn.service)"
     print_rainbow ─────────────────────────────────────────
     echo -e "${green}Bot has been installed and running.${neutral}"
     echo -e "${green}Type ${bold_white}/start${neutral} or ${bold_white}menu${neutral} in the telegram bot${neutral}"
@@ -200,4 +189,4 @@ if [[ ${1} == "nebotsell" ]]; then
 else
     echo -e "${red}Invalid command. Use: ${yellow}start nebotsell${neutral}"
     exit 1
-fi 
+fi
