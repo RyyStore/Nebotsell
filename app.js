@@ -7,6 +7,8 @@ const axios = require('axios');
 const fs = require('fs');
 const cron = require('node-cron');
 const { Telegraf } = require('telegraf');
+const { Mutex } = require('async-mutex'); // <-- TAMBAHKAN INI
+const dbMutex = new Mutex(); // <-- TAMBAHKAN INI
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
@@ -8404,13 +8406,23 @@ topUpQueue.process(async (job) => {
                 );
 
                 if (paymentFound) {
-                    // Sesuaikan 'paymentFound.trx_id' dengan field ID unik dari API Orkut
-                    const apiTransactionId = paymentFound.trx_id || `${paymentFound.tanggal}-${paymentFound.nominal}`;
+                    // --- PERBAIKAN: Logika pembuatan ID Transaksi yang lebih tangguh ---
+                    let apiTransactionId = paymentFound.trx_id; // Prioritaskan ID resmi dari API
 
+                    // Jika tidak ada trx_id, buat ID cadangan yang andal
                     if (!apiTransactionId) {
-                        console.error("[TOPUP_SAFE_POLL] KRITIS: Tidak dapat menemukan ID unik dari payload API Orkut:", paymentFound);
-                        continue;
+                        // Deskripsi transaksi biasanya unik (mengandung referensi dari bank/e-wallet)
+                        // Kita buat hash dari deskripsi tersebut untuk ID yang konsisten dan unik.
+                        if (paymentFound.keterangan) {
+                            apiTransactionId = crypto.createHash('md5').update(paymentFound.keterangan).digest('hex');
+                        } else {
+                            // Fallback terakhir jika keterangan juga tidak ada, gunakan timestamp
+                            // untuk memastikan keunikan pada saat pengecekan ini.
+                            apiTransactionId = `${paymentFound.tanggal || new Date().toISOString()}-${paymentFound.nominal || uniqueAmount}`;
+                        }
+                        console.log(`[TOPUP_SAFE_POLL] ID transaksi dari API tidak ada, membuat ID cadangan: ${apiTransactionId}`);
                     }
+                    // --- AKHIR PERBAIKAN ---
 
                     try {
                         // 1. Coba "kunci" transaksi di database
@@ -8448,15 +8460,22 @@ topUpQueue.process(async (job) => {
 
                         const totalAmountToCredit = baseAmountToppedUp + bonusAmountApplied;
 
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
-                                if (err) return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
-                                resolve();
+                        // --- PERBAIKAN: Lindungi semua operasi tulis DB dengan Mutex ---
+                        const release = await dbMutex.acquire();
+                        try {
+                            await new Promise((resolve, reject) => {
+                                db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
+                                    if (err) return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
+                                    resolve();
+                                });
                             });
-                        });
-                        
-                        await checkAndUpdateUserRole(userId, baseAmountToppedUp);
-                        await recordUserTransaction(userId);
+                            
+                            // Fungsi-fungsi ini juga berpotensi menulis ke DB, jadi harus di dalam lock.
+                            await checkAndUpdateUserRole(userId, baseAmountToppedUp);
+                            await recordUserTransaction(userId);
+                        } finally {
+                            release();
+                        }
 
                         const userInfo = await bot.telegram.getChat(userId).catch(() => ({}));
                         const username = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ${userId}`);
