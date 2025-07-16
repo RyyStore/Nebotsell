@@ -1518,59 +1518,68 @@ bot.command('resetslotserver', async (ctx) => {
 
     await adminResetTotalCreatedAccounts(ctx, serverIdToReset);
 });
-
 bot.command('hideserver', async (ctx) => {
-  const userId = ctx.from.id;
-  if (!adminIds.includes(userId)) {
-    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
-  }
-
-  const args = ctx.message.text.split(' ');
-  if (args.length !== 2) {
-    return ctx.reply('⚠️ Format salah. Gunakan: `/hideserver <server_id>`', { parse_mode: 'Markdown' });
-  }
-
-  const serverId = args[1];
-
-  db.run("UPDATE Server SET hidden = 1 WHERE id = ?", [serverId], function(err) {
-    if (err) {
-      console.error('⚠️ Kesalahan saat menyembunyikan server:', err.message);
-      return ctx.reply('⚠️ Kesalahan saat menyembunyikan server.', { parse_mode: 'Markdown' });
+    const userId = ctx.from.id;
+    if (!adminIds.includes(userId)) {
+        return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
     }
 
-    if (this.changes === 0) {
-      return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+    const args = ctx.message.text.split(' ');
+    if (args.length !== 2) {
+        return ctx.reply('⚠️ Format salah. Gunakan: `/hideserver <server_id>`', { parse_mode: 'Markdown' });
     }
 
-    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil disembunyikan.`, { parse_mode: 'Markdown' });
-  });
+    const serverId = parseInt(args[1], 10); // <-- PERBAIKAN: Konversi ke Angka
+
+    // Validasi apakah input adalah angka yang valid
+    if (isNaN(serverId)) {
+        return ctx.reply('⚠️ Server ID harus berupa angka.', { parse_mode: 'Markdown' });
+    }
+
+    db.run("UPDATE Server SET hidden = 1 WHERE id = ?", [serverId], function(err) {
+        if (err) {
+            console.error('⚠️ Kesalahan saat menyembunyikan server:', err.message);
+            return ctx.reply('⚠️ Kesalahan saat menyembunyikan server.', { parse_mode: 'Markdown' });
+        }
+
+        if (this.changes === 0) {
+            return ctx.reply(`⚠️ Server dengan ID \`${serverId}\` tidak ditemukan.`, { parse_mode: 'Markdown' });
+        }
+
+        ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil disembunyikan.`, { parse_mode: 'Markdown' });
+    });
 });
 
 bot.command('showserver', async (ctx) => {
-  const userId = ctx.from.id;
-  if (!adminIds.includes(userId)) {
-    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
-  }
-
-  const args = ctx.message.text.split(' ');
-  if (args.length !== 2) {
-    return ctx.reply('⚠️ Format salah. Gunakan: `/showserver <server_id>`', { parse_mode: 'Markdown' });
-  }
-
-  const serverId = args[1];
-
-  db.run("UPDATE Server SET hidden = 0 WHERE id = ?", [serverId], function(err) {
-    if (err) {
-      console.error('⚠️ Kesalahan saat menampilkan server:', err.message);
-      return ctx.reply('⚠️ Kesalahan saat menampilkan server.', { parse_mode: 'Markdown' });
+    const userId = ctx.from.id;
+    if (!adminIds.includes(userId)) {
+        return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
     }
 
-    if (this.changes === 0) {
-      return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+    const args = ctx.message.text.split(' ');
+    if (args.length !== 2) {
+        return ctx.reply('⚠️ Format salah. Gunakan: `/showserver <server_id>`', { parse_mode: 'Markdown' });
     }
 
-    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil ditampilkan kembali.`, { parse_mode: 'Markdown' });
-  });
+    const serverId = parseInt(args[1], 10); // <-- PERBAIKAN: Konversi ke Angka
+
+    // Validasi apakah input adalah angka yang valid
+    if (isNaN(serverId)) {
+        return ctx.reply('⚠️ Server ID harus berupa angka.', { parse_mode: 'Markdown' });
+    }
+
+    db.run("UPDATE Server SET hidden = 0 WHERE id = ?", [serverId], function(err) {
+        if (err) {
+            console.error('⚠️ Kesalahan saat menampilkan server:', err.message);
+            return ctx.reply('⚠️ Kesalahan saat menampilkan server.', { parse_mode: 'Markdown' });
+        }
+
+        if (this.changes === 0) {
+            return ctx.reply(`⚠️ Server dengan ID \`${serverId}\` tidak ditemukan.`, { parse_mode: 'Markdown' });
+        }
+
+        ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil ditampilkan kembali.`, { parse_mode: 'Markdown' });
+    });
 });
 
 bot.command('listreseller', async (ctx) => {
@@ -8379,6 +8388,7 @@ async function updateServerField(serverId, value, query) {
 global.depositState = {};
 
 // Proses top-up
+
 topUpQueue.process(async (job) => {
     const { userId, amount, uniqueAmount, qrisMessageId } = job.data;
     const timeout = Date.now() + (15 * 60 * 1000); // Batas waktu 15 menit
