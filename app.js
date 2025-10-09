@@ -12,6 +12,13 @@ const dbMutex = new Mutex(); // <-- TAMBAHKAN INI
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
+const https = require('https'); // <-- Tambahkan baris ini
+
+// Buat instance https.Agent untuk mengabaikan validasi sertifikat
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
+
 
 
 // Require file lokal Anda
@@ -8425,7 +8432,8 @@ topUpQueue.process(async (job) => {
       'Content-Type': 'application/json',
       'User-Agent': 'curl/7.68.0'
     },
-    timeout: 25000
+    timeout: 25000,
+	httpsAgent: httpsAgent 
   }
 );
 
@@ -9291,4 +9299,5 @@ app.listen(port, () => {
     console.error("FATAL ERROR saat inisialisasi pengaturan default:", initError);
     process.exit(1);
   });
+
 });
