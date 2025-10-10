@@ -20,7 +20,6 @@ const httpsAgent = new https.Agent({
 });
 
 
-
 // Require file lokal Anda
 const topUpQueue = require('./queue');
 const { initGenerateBug, injectBugToLink } = require('./generate');
@@ -8413,139 +8412,129 @@ topUpQueue.process(async (job) => {
         }
 
         try {
-            // ===================================================================
-            // BLOK PENDETEKSIAN PEMBAYARAN YANG DIPERBAIKI
-            // ===================================================================
-         const response = await axios.post(
-  // URL sudah benar
-  `https://qris.payment.web.id/payment/qris/${vars.OKE_API_BASE}`, 
-  
-  // Body/Data sekarang menggunakan TOKEN YANG BENAR
-  {
-    "username": vars.ORKUT_USERNAME,
-    "token": vars.ORKUT_TOKEN // <--- PERUBAHAN KRUSIAL DI SINI
-  }, 
-  
-  // Konfigurasi request (User-Agent tetap penting)
-  {
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'curl/7.68.0'
-    },
-    timeout: 25000,
-	httpsAgent: httpsAgent 
-  }
-);
+    const response = await axios.post(
+        `https://qris.payment.web.id/payment/qris/${vars.OKE_API_BASE}`,
+        {
+            "username": vars.ORKUT_USERNAME,
+            "token": vars.ORKUT_TOKEN
+        },
+        {
+            headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'curl/7.6.80'
+            },
+            timeout: 25000,
+            // --- PERUBAHAN UTAMA ADA DI SINI ---
+            httpsAgent: new https.Agent({
+                rejectUnauthorized: false,
+                ciphers: 'DEFAULT:@SECLEVEL=1' // Menggunakan cipher yang lebih kompatibel
+            })
+        }
+    );
 
-            // LOGGING KRUSIAL UNTUK DEBUGGING: Tampilkan seluruh respons dari API
-            console.log(`[TOPUP_DEBUG] Respons mentah dari API mutasi untuk User ${userId}:`, JSON.stringify(response.data, null, 2));
+    // Bagian ini akan sama persis seperti kode asli Anda untuk memproses 'response'
+    console.log(`[TOPUP_DEBUG] Respons mentah dari API mutasi untuk User ${userId}:`, JSON.stringify(response.data, null, 2));
 
-            if (response.data && Array.isArray(response.data.data)) {
-                // Cari transaksi yang cocok dengan jumlah unik
-                const paymentFound = response.data.data.find(item => {
-                    // Log setiap item untuk memudahkan debug
-                    // console.log(`[TOPUP_DEBUG] Mengecek item:`, item); 
-                    
-                    // Deteksi tipe transaksi yang lebih fleksibel
-                    const isCredit = item.type === 'CR' || item.tipe === 'CR' || item.transaction_type?.toLowerCase() === 'credit';
-                    
-                    // Deteksi nominal yang lebih fleksibel
-                    const nominalApi = parseFloat(item.nominal || item.amount || 0);
+    if (response.data && Array.isArray(response.data.data)) {
+        // Cari transaksi yang cocok dengan jumlah unik
+        const paymentFound = response.data.data.find(item => {
+            const isCredit = item.type === 'CR' || item.tipe === 'CR' || item.transaction_type?.toLowerCase() === 'credit';
+            const nominalApi = parseFloat(item.nominal || item.amount || 0);
+            return isCredit && nominalApi === parseFloat(uniqueAmount);
+        });
 
-                    return isCredit && nominalApi === parseFloat(uniqueAmount);
+        if (paymentFound) {
+            let apiTransactionId = paymentFound.trx_id || paymentFound.transaction_id || paymentFound.id;
+
+            if (!apiTransactionId) {
+                const description = paymentFound.keterangan || paymentFound.description || `TRX-${uniqueAmount}-${paymentFound.tanggal}`;
+                apiTransactionId = crypto.createHash('sha256').update(description).digest('hex');
+                console.log(`[TOPUP_POLL] ID transaksi dari API tidak ada, membuat ID cadangan dari hash: ${apiTransactionId}`);
+            }
+
+            const release = await dbMutex.acquire(); // Kunci database sebelum menulis
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'INSERT INTO processed_orkut_transactions (transaction_api_id, user_id_credited, amount_credited, processed_at) VALUES (?, ?, ?, ?)',
+                        [apiTransactionId, userId, uniqueAmount, new Date().toISOString()],
+                        function (err) {
+                            if (err) {
+                                if (err.message.includes('UNIQUE constraint failed')) {
+                                    return reject(new Error('ALREADY_PROCESSED'));
+                                }
+                                return reject(err); // Error lain
+                            }
+                            resolve(); // Berhasil mengunci
+                        }
+                    );
                 });
 
-                if (paymentFound) {
-                    // ===================================================================
-                    // BLOK PENGUNCIAN TRANSAKSI YANG DIPERBAIKI (ANTI DOUBLE TOPUP)
-                    // ===================================================================
-                    let apiTransactionId = paymentFound.trx_id || paymentFound.transaction_id || paymentFound.id;
+                console.log(`[TOPUP_POLL] ✅ Transaksi ${apiTransactionId} berhasil dikunci untuk User ${userId}. Melanjutkan proses...`);
+                pembayaranDiterima = true;
 
-                    if (!apiTransactionId) {
-                        // Jika tidak ada ID resmi, buat ID unik dari hash keterangan (deskripsi)
-                        const description = paymentFound.keterangan || paymentFound.description || `TRX-${uniqueAmount}-${paymentFound.tanggal}`;
-                        apiTransactionId = crypto.createHash('sha256').update(description).digest('hex');
-                        console.log(`[TOPUP_POLL] ID transaksi dari API tidak ada, membuat ID cadangan dari hash: ${apiTransactionId}`);
-                    }
-
-                    const release = await dbMutex.acquire(); // Kunci database sebelum menulis
-                    try {
-                        // 1. Coba "kunci" transaksi agar tidak diproses dua kali
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                'INSERT INTO processed_orkut_transactions (transaction_api_id, user_id_credited, amount_credited, processed_at) VALUES (?, ?, ?, ?)',
-                                [apiTransactionId, userId, uniqueAmount, new Date().toISOString()],
-                                function (err) {
-                                    if (err) {
-                                        // Jika sudah ada (UNIQUE constraint failed), berarti sudah diproses.
-                                        if (err.message.includes('UNIQUE constraint failed')) {
-                                            return reject(new Error('ALREADY_PROCESSED'));
-                                        }
-                                        return reject(err); // Error lain
-                                    }
-                                    resolve(); // Berhasil mengunci
-                                }
-                            );
-                        });
-
-                        console.log(`[TOPUP_POLL] ✅ Transaksi ${apiTransactionId} berhasil dikunci untuk User ${userId}. Melanjutkan proses...`);
-                        pembayaranDiterima = true;
-
-                        // 2. Hapus pesan QRIS jika ada
-                        if (qrisMessageId) {
-                            try { await bot.telegram.deleteMessage(userId, qrisMessageId); } catch (e) {/* abaikan jika gagal */}
-                        }
-
-                        // 3. Hitung bonus (jika ada)
-                        const baseAmountToppedUp = amount;
-                        let bonusAmountApplied = 0;
-                        const bonusConfig = await getActiveBonusConfig();
-
-                        if (bonusConfig && baseAmountToppedUp >= bonusConfig.min_topup_amount) {
-                            bonusAmountApplied = calculateBonusAmount(baseAmountToppedUp, bonusConfig);
-                        }
-                        const totalAmountToCredit = baseAmountToppedUp + bonusAmountApplied;
-
-                        // 4. Update saldo, role, dan catat transaksi
-                        await new Promise((resolve, reject) => {
-                            db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
-                                if (err) return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
-                                resolve();
-                            });
-                        });
-                        
-                        await checkAndUpdateUserRole(userId, baseAmountToppedUp);
-                        await recordUserTransaction(userId);
-
-                        // 5. Kirim semua notifikasi
-                        const userInfo = await bot.telegram.getChat(userId).catch(() => ({}));
-                        const username = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ${userId}`);
-                        
-                        await sendUserNotificationTopup(userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
-                        await sendAdminNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
-                        await sendGroupNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
-
-                        // 6. Tampilkan menu utama lagi
-                        await sendMainMenuToUser(userId);
-
-                    } catch (dbError) {
-                        if (dbError.message === 'ALREADY_PROCESSED') {
-                            console.log(`[TOPUP_POLL] Transaksi ${apiTransactionId} sudah pernah diproses. Diabaikan untuk User ${userId}.`);
-                            pembayaranDiterima = true; // Anggap selesai agar loop berhenti
-                        } else {
-                            // Error serius saat proses DB setelah pembayaran terdeteksi
-                            console.error(`[TOPUP_POLL] KRITIS: Pembayaran terdeteksi TAPI gagal proses DB untuk User ${userId}:`, dbError);
-                            bot.telegram.sendMessage(ADMIN, `🔴 KRITIS: Pembayaran Rp${uniqueAmount} untuk User ${userId} terdeteksi tapi GAGAL diproses di DB. Harap periksa manual! Error: ${dbError.message}`).catch(()=>{});
-                            pembayaranDiterima = true; // Hentikan loop untuk mencegah error berulang
-                        }
-                    } finally {
-                        release(); // Selalu lepaskan kunci database
-                    }
+                if (qrisMessageId) {
+                    try { await bot.telegram.deleteMessage(userId, qrisMessageId); } catch (e) {/* abaikan jika gagal */}
                 }
+
+                const baseAmountToppedUp = amount;
+                let bonusAmountApplied = 0;
+                const bonusConfig = await getActiveBonusConfig();
+
+                if (bonusConfig && baseAmountToppedUp >= bonusConfig.min_topup_amount) {
+                    bonusAmountApplied = calculateBonusAmount(baseAmountToppedUp, bonusConfig);
+                }
+                const totalAmountToCredit = baseAmountToppedUp + bonusAmountApplied;
+
+                await new Promise((resolve, reject) => {
+                    db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [totalAmountToCredit, userId], (err) => {
+                        if (err) return reject(new Error(`Gagal update saldo DB untuk user ${userId}: ${err.message}`));
+                        resolve();
+                    });
+                });
+
+                await checkAndUpdateUserRole(userId, baseAmountToppedUp);
+                await recordUserTransaction(userId);
+
+                const userInfo = await bot.telegram.getChat(userId).catch(() => ({}));
+                const username = userInfo.username ? `@${userInfo.username}` : (userInfo.first_name || `User ${userId}`);
+
+                await sendUserNotificationTopup(userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+                await sendAdminNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+                await sendGroupNotificationTopup(username, userId, baseAmountToppedUp, uniqueAmount, bonusAmountApplied);
+
+                await sendMainMenuToUser(userId);
+
+            } catch (dbError) {
+                if (dbError.message === 'ALREADY_PROCESSED') {
+                    console.log(`[TOPUP_POLL] Transaksi ${apiTransactionId} sudah pernah diproses. Diabaikan untuk User ${userId}.`);
+                    pembayaranDiterima = true; // Anggap selesai agar loop berhenti
+                } else {
+                    console.error(`[TOPUP_POLL] KRITIS: Pembayaran terdeteksi TAPI gagal proses DB untuk User ${userId}:`, dbError);
+                    bot.telegram.sendMessage(ADMIN, `🔴 KRITIS: Pembayaran Rp${uniqueAmount} untuk User ${userId} terdeteksi tapi GAGAL diproses di DB. Harap periksa manual! Error: ${dbError.message}`).catch(()=>{});
+                    pembayaranDiterima = true; // Hentikan loop untuk mencegah error berulang
+                }
+            } finally {
+                release(); // Selalu lepaskan kunci database
             }
-        } catch (apiError) {
-            console.error(`[TOPUP_POLL] Gagal mengambil mutasi dari API: ${apiError.message}`);
         }
+    }
+} catch (apiError) {
+    // --- INI BLOK LOGGING ERROR YANG LEBIH DETAIL ---
+    console.error(`[TOPUP_POLL] Gagal mengambil mutasi dari API.`);
+    if (apiError.response) {
+        // Server merespons dengan status error (4xx, 5xx)
+        console.error(`[TOPUP_POLL] Status: ${apiError.response.status}`);
+        console.error(`[TOPUP_POLL] Headers:`, JSON.stringify(apiError.response.headers, null, 2));
+        console.error(`[TOPUP_POLL] Data:`, JSON.stringify(apiError.response.data, null, 2));
+    } else if (apiError.request) {
+        // Request dibuat tapi tidak ada respons
+        console.error('[TOPUP_POLL] Tidak ada respons yang diterima dari server.');
+    } else {
+        // Error lain saat setup request
+        console.error('[TOPUP_POLL] Error saat setup request:', apiError.message);
+    }
+}
         
         // Tunggu sebelum pengecekan berikutnya jika pembayaran belum diterima
         if (!pembayaranDiterima) {
@@ -9299,5 +9288,4 @@ app.listen(port, () => {
     console.error("FATAL ERROR saat inisialisasi pengaturan default:", initError);
     process.exit(1);
   });
-
 });
