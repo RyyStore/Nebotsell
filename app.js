@@ -219,6 +219,7 @@ db.run(`CREATE TABLE IF NOT EXISTS payg_sessions (
     last_billed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     is_active BOOLEAN DEFAULT 1,
+  is_paused BOOLEAN DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (server_id) REFERENCES Server(id) ON DELETE CASCADE
 )`, (err) => {
@@ -582,12 +583,13 @@ Tanggal: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
 async function processPaygBilling() {
     console.log('[PAYG_ENGINE] Memulai siklus pemeriksaan penagihan...');
     try {
-        const activeSessions = await new Promise((resolve, reject) => {
-            db.all("SELECT * FROM payg_sessions WHERE is_active = 1", [], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
+    // Ambil sesi aktif yang tidak dijeda (is_paused != 1) - sesi yang dijeda tidak ditagih
+    const activeSessions = await new Promise((resolve, reject) => {
+      db.all(`SELECT ps.* FROM payg_sessions ps WHERE ps.is_active = 1 AND (ps.is_paused IS NULL OR ps.is_paused = 0)`, [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
 
         if (activeSessions.length === 0) return;
         
@@ -1542,7 +1544,7 @@ bot.command('hideserver', async (ctx) => {
         return ctx.reply('⚠️ Server ID harus berupa angka.', { parse_mode: 'Markdown' });
     }
 
-    db.run("UPDATE Server SET hidden = 1 WHERE id = ?", [serverId], function(err) {
+  db.run("UPDATE Server SET hidden = 1 WHERE id = ?", [serverId], function(err) {
         if (err) {
             console.error('⚠️ Kesalahan saat menyembunyikan server:', err.message);
             return ctx.reply('⚠️ Kesalahan saat menyembunyikan server.', { parse_mode: 'Markdown' });
@@ -1551,10 +1553,131 @@ bot.command('hideserver', async (ctx) => {
         if (this.changes === 0) {
             return ctx.reply(`⚠️ Server dengan ID \`${serverId}\` tidak ditemukan.`, { parse_mode: 'Markdown' });
         }
+    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil disembunyikan.`, { parse_mode: 'Markdown' });
 
-        ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil disembunyikan.`, { parse_mode: 'Markdown' });
+    // Notify all affected users (both PAYG sessions and fixed accounts) and pause PAYG sessions
+    try {
+      notifyUsersServerHidden(serverId).catch(e => console.error('notifyUsersServerHidden failed:', e));
+    } catch (e) {
+      console.error('Error while notifying users after hideserver:', e.message);
+    }
     });
 });
+
+/**
+ * Notify users who have accounts (fixed or PAYG) on a server that was hidden.
+ * This function will also pause active PAYG sessions for the server.
+ */
+async function notifyUsersServerHidden(serverId) {
+  try {
+    const serverRow = await new Promise((resolve, reject) => {
+      db.get('SELECT id, nama_server FROM Server WHERE id = ?', [serverId], (err, row) => err ? reject(err) : resolve(row));
+    });
+    const serverName = (serverRow && serverRow.nama_server) ? serverRow.nama_server : `Server ${serverId}`;
+
+    // Fetch active PAYG sessions on this server
+    const paygRows = await new Promise((resolve, reject) => {
+      db.all('SELECT id, user_id, account_username, protocol FROM payg_sessions WHERE server_id = ? AND is_active = 1', [serverId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+
+    // Pause payg sessions if any
+    if (paygRows && paygRows.length > 0) {
+      const ids = paygRows.map(r => r.id);
+      await new Promise((resolve, reject) => {
+        db.run(`UPDATE payg_sessions SET is_paused = 1 WHERE id IN (${ids.map(() => '?').join(',')})`, ids, (err) => err ? reject(err) : resolve());
+      });
+    }
+
+    // Fetch fixed accounts on this server
+    const fixedRows = await new Promise((resolve, reject) => {
+      db.all('SELECT id, created_by_user_id as user_id, account_username, protocol FROM created_accounts WHERE server_id = ? AND is_active = 1', [serverId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+
+    // Aggregate by user_id
+    const userMap = new Map();
+    for (const r of paygRows) {
+      if (!userMap.has(r.user_id)) userMap.set(r.user_id, []);
+      userMap.get(r.user_id).push({ type: 'PAYG', id: r.id, username: r.account_username, protocol: r.protocol });
+    }
+    for (const r of fixedRows) {
+      if (!userMap.has(r.user_id)) userMap.set(r.user_id, []);
+      userMap.get(r.user_id).push({ type: 'Langganan', id: r.id, username: r.account_username, protocol: r.protocol });
+    }
+
+    // Send message per user
+    for (const [userId, accounts] of userMap.entries()) {
+      try {
+        let text = `⚠️ Pemberitahuan: Server *${escapeHtml(serverName)}* sedang ditutup sementara oleh admin.\n\n`;
+        text += `Akun Anda yang terpengaruh pada server ini:\n`;
+        for (const acc of accounts) {
+          const proto = acc.protocol ? acc.protocol.toUpperCase() : '-';
+          text += `• <code>${escapeHtml(acc.username)}</code> — ${proto} (${acc.type})\n`;
+        }
+        text += `\nCatatan:\n- Akun langganan tetap terlihat, tetapi beberapa tindakan (mis. penghapusan via web) mungkin dibatasi.\n- Sesi PAYG telah dijeda dan tidak akan menagih sampai server ditampilkan kembali.\n- Jika Anda butuh tindakan khusus, silakan hubungi support.`;
+
+        await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML', disable_web_page_preview: true }));
+      } catch (e) {
+        console.warn('Gagal mengirim notifikasi server-hidden ke user', userId, e.message);
+      }
+    }
+
+  } catch (err) {
+    console.error('notifyUsersServerHidden error:', err);
+  }
+}
+
+/**
+ * Notify owners when a hidden server is shown again.
+ * Will inform both PAYG and fixed account owners that normal actions are restored.
+ */
+async function notifyUsersServerShown(serverId) {
+  try {
+    const serverRow = await new Promise((resolve, reject) => {
+      db.get('SELECT id, nama_server FROM Server WHERE id = ?', [serverId], (err, row) => err ? reject(err) : resolve(row));
+    });
+    const serverName = (serverRow && serverRow.nama_server) ? serverRow.nama_server : `Server ${serverId}`;
+
+    // Get active PAYG sessions (previously paused ones) and notify (if any)
+    const paygRows = await new Promise((resolve, reject) => {
+      db.all('SELECT id, user_id, account_username, protocol FROM payg_sessions WHERE server_id = ? AND is_active = 1', [serverId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+
+    // Get active fixed accounts on this server
+    const fixedRows = await new Promise((resolve, reject) => {
+      db.all('SELECT id, created_by_user_id as user_id, account_username, protocol FROM created_accounts WHERE server_id = ? AND is_active = 1', [serverId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
+
+    // Aggregate per user
+    const userMap = new Map();
+    for (const r of paygRows) {
+      if (!userMap.has(r.user_id)) userMap.set(r.user_id, []);
+      userMap.get(r.user_id).push({ type: 'PAYG', username: r.account_username, protocol: r.protocol });
+    }
+    for (const r of fixedRows) {
+      if (!userMap.has(r.user_id)) userMap.set(r.user_id, []);
+      userMap.get(r.user_id).push({ type: 'Langganan', username: r.account_username, protocol: r.protocol });
+    }
+
+    for (const [userId, accounts] of userMap.entries()) {
+      try {
+        let text = `✅ Pemberitahuan: Server *${escapeHtml(serverName)}* sekarang sudah <b>ditampilkan kembali</b> oleh admin.\n\n`;
+        text += `Akun Anda di server ini:\n`;
+        for (const acc of accounts) {
+          const proto = acc.protocol ? acc.protocol.toUpperCase() : '-';
+          text += `• <code>${escapeHtml(acc.username)}</code> — ${proto} (${acc.type})\n`;
+        }
+        text += `\nCatatan:\n- Aksi seperti penghapusan via web/bot sekarang sudah dapat dilakukan kembali.\n- Jika Anda ingin menghapus akun, silakan gunakan menu 'Hapus Akun' di bot atau UI.`;
+
+        await callTelegramApiWithRetry(() => bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML', disable_web_page_preview: true }));
+      } catch (e) {
+        console.warn('Gagal mengirim notifikasi server-shown ke user', userId, e.message);
+      }
+    }
+
+  } catch (err) {
+    console.error('notifyUsersServerShown error:', err);
+  }
+}
 
 bot.command('showserver', async (ctx) => {
     const userId = ctx.from.id;
@@ -1584,7 +1707,37 @@ bot.command('showserver', async (ctx) => {
             return ctx.reply(`⚠️ Server dengan ID \`${serverId}\` tidak ditemukan.`, { parse_mode: 'Markdown' });
         }
 
-        ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil ditampilkan kembali.`, { parse_mode: 'Markdown' });
+    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil ditampilkan kembali.`, { parse_mode: 'Markdown' });
+
+    // Resume payg sessions on this server (unpause) and reset last_billed_at to now to avoid immediate billing
+    try {
+      db.all('SELECT id, user_id, account_username FROM payg_sessions WHERE server_id = ? AND is_active = 1 AND is_paused = 1', [serverId], async (err, rows) => {
+        if (err) return console.error('Error fetching payg sessions to resume:', err.message);
+        if (rows && rows.length > 0) {
+          const nowISO = new Date().toISOString();
+          const ids = rows.map(r => r.id);
+          db.run(`UPDATE payg_sessions SET is_paused = 0, last_billed_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`, [nowISO, ...ids], (err2) => {
+            if (err2) return console.error('Error resuming payg sessions:', err2.message);
+          });
+
+          for (const s of rows) {
+            try {
+              await callTelegramApiWithRetry(() => bot.telegram.sendMessage(s.user_id, `✅ Layanan Pay-As-You-Go untuk akun <code>${escapeHtml(s.account_username)}</code> telah *dilanjutkan* karena server sekarang sudah ditampilkan kembali. Anda akan dikenai biaya mulai sekarang sesuai aturan.` , { parse_mode: 'HTML' }));
+            } catch (e) {
+              console.warn('Gagal mengirim notifikasi resume PAYG ke user', s.user_id, e.message);
+            }
+          }
+        }
+        // Setelah resume PAYG selesai (atau jika tidak ada), kirim notifikasi kepada pemilik akun fixed bahwa server sudah ditampilkan kembali
+        try {
+          await notifyUsersServerShown(serverId);
+        } catch (e) {
+          console.error('notifyUsersServerShown failed:', e.message || e);
+        }
+      });
+    } catch (e) {
+      console.error('Error while resuming payg sessions after showserver:', e.message);
+    }
     });
 });
 
@@ -2346,21 +2499,21 @@ bot.action('my_accounts_list', async (ctx) => {
 
     try {
         // Ambil semua jenis akun dalam satu kali jalan untuk efisiensi
-        const fixedAccounts = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 'fixed' as type, ca.id, ca.account_username, ca.protocol, ca.expiry_date, s.nama_server
-                FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
-                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND ca.expiry_date > DATETIME('now', 'localtime')
-            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
-        });
+    const fixedAccounts = await new Promise((resolve, reject) => {
+      db.all(`
+        SELECT 'fixed' as type, ca.id, ca.account_username, ca.protocol, ca.expiry_date, s.nama_server, s.hidden AS server_hidden
+        FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
+        WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND ca.expiry_date > DATETIME('now', 'localtime')
+      `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
 
-        const paygAccounts = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 'payg' as type, ps.id, ps.account_username, ps.protocol, ps.hourly_rate, s.nama_server
-                FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
-                WHERE ps.user_id = ? AND ps.is_active = 1
-            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
-        });
+    const paygAccounts = await new Promise((resolve, reject) => {
+      db.all(`
+        SELECT 'payg' as type, ps.id, ps.account_username, ps.protocol, ps.hourly_rate, s.nama_server, s.hidden AS server_hidden
+        FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
+        WHERE ps.user_id = ? AND ps.is_active = 1
+      `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
 
         const allAccounts = [...fixedAccounts, ...paygAccounts];
 
@@ -2440,13 +2593,13 @@ bot.action(/manage_account_fixed_(\d+)/, async (ctx) => {
     await ctx.answerCbQuery();
 
     try {
-        const acc = await new Promise((resolve, reject) => {
-            const query = `
-                SELECT ca.*, s.harga, s.harga_reseller, s.nama_server 
-                FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
-                WHERE ca.id = ? AND ca.created_by_user_id = ?`;
-            db.get(query, [accountId, userId], (err, row) => err || !row ? reject(new Error("Akun tidak ditemukan.")) : resolve(row));
-        });
+    const acc = await new Promise((resolve, reject) => {
+      const query = `
+        SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, s.hidden AS server_hidden 
+        FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
+        WHERE ca.id = ? AND ca.created_by_user_id = ?`;
+      db.get(query, [accountId, userId], (err, row) => err || !row ? reject(new Error("Akun tidak ditemukan.")) : resolve(row));
+    });
 
         const user = await new Promise((resolve, reject) => {
             db.get("SELECT role FROM users WHERE user_id = ?", [userId], (err, row) => err || !row ? reject(new Error("User tidak ditemukan.")) : resolve(row));
@@ -2459,7 +2612,14 @@ bot.action(/manage_account_fixed_(\d+)/, async (ctx) => {
         let refundAmount = Math.floor((totalHargaAwal - biayaTerpakai) / 100) * 100;
         if (refundAmount < 0) refundAmount = 0;
         
-        const message = `
+    // Jika server disembunyikan, tampilkan pesan bahwa penghapusan via bot tidak diizinkan
+    if (acc.server_hidden === 1) {
+      const msg = `🚫 Penghapusan dibatasi: Server <b>${escapeHtml(acc.nama_server)}</b> sedang ditutup sementara oleh admin. Penghapusan akun via bot tidak diizinkan saat server ditutup.`;
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts_list' }]] } });
+      return;
+    }
+
+    const message = `
 🗑️ *Hapus & Refund Akun*
 ──────────────────────
 Anda akan menghapus akun:
@@ -2473,17 +2633,17 @@ Anda akan menghapus akun:
 - Sisa Saldo Kembali: <b>Rp ${refundAmount.toLocaleString('id-ID')}</b>
 ──────────────────────
 Apakah Anda yakin? Tindakan ini tidak bisa dibatalkan.
-        `;
+    `;
 
-        await ctx.editMessageText(message, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '✅ Ya, Hapus & Refund', callback_data: `delete_refund_confirm_${accountId}` }],
-                    [{ text: '❌ Batal', callback_data: 'my_accounts_list' }]
-                ]
-            }
-        });
+    await ctx.editMessageText(message, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Ya, Hapus & Refund', callback_data: `delete_refund_confirm_${accountId}` }],
+          [{ text: '❌ Batal', callback_data: 'my_accounts_list' }]
+        ]
+      }
+    });
     } catch (e) {
         console.error("Error di manage_account_fixed:", e);
         await ctx.answerCbQuery(e.message, { show_alert: true });
@@ -2547,12 +2707,12 @@ bot.action(/delete_refund_confirm_(\d+)/, async (ctx) => {
     try {
         // Ambil semua data yang dibutuhkan dalam satu query
         const data = await new Promise((resolve, reject) => {
-            const query = `
-                SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, u.role
-                FROM created_accounts ca 
-                JOIN Server s ON ca.server_id = s.id
-                JOIN users u ON ca.created_by_user_id = u.user_id
-                WHERE ca.id = ? AND ca.created_by_user_id = ?`;
+      const query = `
+        SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, s.hidden AS server_hidden, u.role
+        FROM created_accounts ca 
+        JOIN Server s ON ca.server_id = s.id
+        JOIN users u ON ca.created_by_user_id = u.user_id
+        WHERE ca.id = ? AND ca.created_by_user_id = ?`;
             db.get(query, [accountId, userId], (err, row) => err || !row ? reject(new Error("Akun tidak ditemukan atau bukan milik Anda.")) : resolve(row));
         });
 
@@ -2564,8 +2724,14 @@ bot.action(/delete_refund_confirm_(\d+)/, async (ctx) => {
         let refundAmount = Math.floor((totalHargaAwal - biayaTerpakai) / 100) * 100;
         if (refundAmount < 0) refundAmount = 0;
 
-        // Proses penghapusan
-        await callDeleteAPI(data.protocol, data.account_username, data.server_id);
+    // Jika server sedang disembunyikan, larang penghapusan via bot juga
+    if (data.server_hidden === 1) {
+      await ctx.editMessageText(`🚫 Penghapusan dibatasi: Server <b>${escapeHtml(data.nama_server || ('ID ' + data.server_id))}</b> sedang ditutup sementara oleh admin. Penghapusan akun via bot tidak diizinkan saat server ditutup.`, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts_list' }]] } });
+      return;
+    }
+
+    // Proses penghapusan
+    await callDeleteAPI(data.protocol, data.account_username, data.server_id);
         
         await new Promise((resolve, reject) => {
             db.serialize(() => {
@@ -2601,6 +2767,31 @@ bot.action(/delete_refund_confirm_(\d+)/, async (ctx) => {
 bot.action(/stop_payg_execute_(\d+)/, async (ctx) => {
     const sessionId = parseInt(ctx.match[1]);
     await ctx.editMessageText("⏳ Memproses penghentian layanan...");
+
+    // Cek apakah server untuk sesi ini sedang disembunyikan
+    try {
+      const sessionInfo = await new Promise((resolve, reject) => {
+        const q = `SELECT ps.*, s.hidden AS server_hidden, s.nama_server FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id WHERE ps.id = ?`;
+        db.get(q, [sessionId], (err, row) => err ? reject(err) : resolve(row));
+      });
+
+      if (!sessionInfo) {
+        await ctx.reply('🚫 Sesi PAYG tidak ditemukan.');
+        await sendMainMenu(ctx);
+        return;
+      }
+
+      if (sessionInfo.server_hidden === 1) {
+        // Beritahu pengguna bahwa penghentian via bot tidak diizinkan saat server disembunyikan
+        await ctx.editMessageText(`🚫 Penghentian layanan dibatasi: Server <b>${escapeHtml(sessionInfo.nama_server || ('ID ' + sessionInfo.server_id))}</b> sedang ditutup sementara oleh admin. Penghentian layanan via bot tidak diizinkan saat server ditutup.`, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'my_accounts_list' }]] } });
+        return;
+      }
+
+    } catch (err) {
+      console.error('Error checking session server_hidden in stop_payg_execute:', err);
+      // If check fails, continue with stop to avoid leaving user stuck — but log the error
+    }
+
     const success = await stopPaygSession(sessionId, 'Dihentikan oleh pengguna');
     
     // Hapus pesan "memproses..." sebelum kembali ke menu utama
@@ -9010,19 +9201,24 @@ app.post('/api/delete-account', isAuthenticated, async (req, res) => {
     try {
         if (accountType === 'fixed') {
             // Logika untuk akun langganan (dengan refund)
-            const data = await new Promise((resolve, reject) => {
-                const query = `
-                    SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, u.role
-                    FROM created_accounts ca 
-                    JOIN Server s ON ca.server_id = s.id
-                    JOIN users u ON ca.created_by_user_id = u.user_id
-                    WHERE ca.id = ?`;
-                db.get(query, [accountId], (err, row) => err ? reject(err) : resolve(row));
-            });
+      const data = await new Promise((resolve, reject) => {
+        const query = `
+          SELECT ca.*, s.harga, s.harga_reseller, s.nama_server, s.hidden AS server_hidden, u.role
+          FROM created_accounts ca 
+          JOIN Server s ON ca.server_id = s.id
+          JOIN users u ON ca.created_by_user_id = u.user_id
+          WHERE ca.id = ?`;
+        db.get(query, [accountId], (err, row) => err ? reject(err) : resolve(row));
+      });
 
-            if (!data || data.created_by_user_id !== sessionUserId) {
+      if (!data || data.created_by_user_id !== sessionUserId) {
                 return res.status(403).json({ success: false, message: "Akses ditolak. Ini bukan akun Anda." });
             }
+
+      // Jika server tempat akun berada sedang disembunyikan, larang penghapusan lewat UI/web
+      if (data.server_hidden === 1) {
+        return res.status(400).json({ success: false, message: "Server ditutup sementara - penghapusan akun tidak diizinkan saat server ditutup." });
+      }
 
             const hargaPerHari = data.role === 'reseller' ? data.harga_reseller : data.harga;
             const totalHargaAwal = calculatePrice(hargaPerHari, data.duration_days);
@@ -9048,14 +9244,25 @@ app.post('/api/delete-account', isAuthenticated, async (req, res) => {
 
             res.json({ success: true, message: `Akun ${data.account_username} berhasil dihapus. Saldo Rp${refundAmount.toLocaleString('id-ID')} telah dikembalikan.` });
 
-        } else if (accountType === 'payg') {
-            // Untuk PAYG, kita cukup panggil fungsi stopPaygSession yang sudah ada
-            const success = await stopPaygSession(accountId, 'Dihentikan oleh pengguna via web');
-            if (success) {
-                res.json({ success: true, message: `Layanan Pay As You Go berhasil dihentikan.` });
-            } else {
-                throw new Error("Gagal menghentikan sesi Pay As You Go.");
-            }
+    } else if (accountType === 'payg') {
+      // Untuk PAYG, cek apakah server sesi ini sedang disembunyikan; jika ya, larang penghentian via web
+      const sessionInfo = await new Promise((resolve, reject) => {
+        const q = `SELECT ps.*, s.hidden AS server_hidden, s.nama_server FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id WHERE ps.id = ?`;
+        db.get(q, [accountId], (err, row) => err ? reject(err) : resolve(row));
+      });
+
+      if (!sessionInfo) return res.status(404).json({ success: false, message: 'Sesi PAYG tidak ditemukan.' });
+      if (sessionInfo.server_hidden === 1) {
+        return res.status(400).json({ success: false, message: 'Server ditutup sementara - penghentian sesi PAYG via web tidak diizinkan saat server ditutup.' });
+      }
+
+      // Untuk PAYG, kita cukup panggil fungsi stopPaygSession yang sudah ada
+      const success = await stopPaygSession(accountId, 'Dihentikan oleh pengguna via web');
+      if (success) {
+        res.json({ success: true, message: `Layanan Pay As You Go berhasil dihentikan.` });
+      } else {
+        throw new Error("Gagal menghentikan sesi Pay As You Go.");
+      }
         } else {
             return res.status(400).json({ success: false, message: "Tipe akun tidak dikenal." });
         }
@@ -9092,23 +9299,23 @@ app.get('/api/servers', isAuthenticated, async (req, res) => {
 app.get('/api/my-accounts', isAuthenticated, async (req, res) => {
     const userId = req.session.user.user_id;
     try {
-        // Mengambil akun langganan (fixed)
-        const fixedAccounts = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 'fixed' as type, ca.id, ca.account_username, ca.protocol, ca.expiry_date, s.nama_server
-                FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
-                WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND date(ca.expiry_date) > date('now', 'localtime')
-            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
-        });
+    // Mengambil akun langganan (fixed) - sertakan status server_hidden sehingga frontend dapat menandai akun jika server disembunyikan
+    const fixedAccounts = await new Promise((resolve, reject) => {
+      db.all(`
+        SELECT 'fixed' as type, ca.id, ca.account_username, ca.protocol, ca.expiry_date, s.nama_server, s.hidden AS server_hidden
+        FROM created_accounts ca JOIN Server s ON ca.server_id = s.id
+        WHERE ca.created_by_user_id = ? AND ca.is_active = 1 AND date(ca.expiry_date) > date('now', 'localtime')
+      `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
 
         // Mengambil akun Pay-As-You-Go (payg)
-        const paygAccounts = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 'payg' as type, ps.id, ps.account_username, ps.protocol, s.nama_server
-                FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
-                WHERE ps.user_id = ? AND ps.is_active = 1
-            `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
-        });
+    const paygAccounts = await new Promise((resolve, reject) => {
+      db.all(`
+        SELECT 'payg' as type, ps.id, ps.account_username, ps.protocol, s.nama_server, s.hidden AS server_hidden, ps.is_paused
+        FROM payg_sessions ps JOIN Server s ON ps.server_id = s.id
+        WHERE ps.user_id = ? AND ps.is_active = 1
+      `, [userId], (err, rows) => err ? reject(err) : resolve(rows || []));
+    });
 
         res.json({ success: true, data: [...fixedAccounts, ...paygAccounts] });
     } catch (error) {
@@ -9141,6 +9348,10 @@ app.post('/api/create-account', isAuthenticated, async (req, res) => {
         if (!user || !server) {
             return res.status(404).json({ success: false, message: 'User atau Server tidak ditemukan.' });
         }
+    // Jika server disembunyikan oleh admin, tolak operasi pembuatan akun
+    if (server.hidden === 1 || server.hidden === '1') {
+      return res.status(400).json({ success: false, message: 'Server yang dipilih sedang disembunyikan oleh admin. Pembuatan akun tidak diperbolehkan.' });
+    }
         if (server.total_create_akun >= server.batas_create_akun) {
             return res.status(400).json({ success: false, message: 'Server yang dipilih sudah penuh.' });
         }
@@ -9275,17 +9486,31 @@ app.post('/api/logout', (req, res) => {
 
 app.listen(port, () => {
   initializeDefaultSettings().then(() => { // Panggil di sini
-    bot.launch().then(() => {
-      // Panggil reset saat startup untuk menangani jika bot offline saat jadwal cron
-      resetAccountsCreated30Days(); // Panggil tanpa forceRun
-      console.log('Bot telah dimulai');
-    }).catch((error) => {
-      console.error('Error Kritis saat memulai bot (bot.launch()):', error);
-      process.exit(1);
-    });
+    // Hanya jalankan bot jika BOT_TOKEN telah dikonfigurasi dengan nilai nyata
+    if (typeof BOT_TOKEN === 'string' && BOT_TOKEN.length > 20 && !BOT_TOKEN.includes('ISI_DENGAN') && !BOT_TOKEN.includes('TOKEN')) {
+      bot.launch().then(() => {
+        // Panggil reset saat startup untuk menangani jika bot offline saat jadwal cron
+        resetAccountsCreated30Days(); // Panggil tanpa forceRun
+        console.log('Bot telah dimulai');
+      }).catch((error) => {
+        console.error('Error Kritis saat memulai bot (bot.launch()):', error);
+        // Jangan keluar otomatis; beri tahu saja dan biarkan server tetap berjalan
+      });
+    } else {
+      console.warn('BOT_TOKEN tidak terisi atau tampak placeholder; melewatkan bot.launch() — isi BOT_TOKEN di .vars.json jika ingin mengaktifkan bot.');
+    }
     console.log(`Server berjalan di port ${port}`);
   }).catch(initError => {
     console.error("FATAL ERROR saat inisialisasi pengaturan default:", initError);
     process.exit(1);
   });
+});
+
+// Add is_paused column if it doesn't exist (for upgrades)
+db.run("ALTER TABLE payg_sessions ADD COLUMN is_paused BOOLEAN DEFAULT 0", (err) => {
+  if (err && !err.message.includes('duplicate column name')) {
+    console.error('Gagal menambahkan kolom is_paused pada payg_sessions:', err.message);
+  } else {
+    console.log('Kolom "is_paused" untuk payg_sessions sudah diperiksa/ditambahkan.');
+  }
 });
