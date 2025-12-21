@@ -53,10 +53,10 @@ const saltRounds = 10;
 
 
 
-const { createssh, createvmess, createvless, createtrojan } = require('./modules/create');
-const { trialssh, trialvmess, trialvless, trialtrojan } = require('./modules/trial');
-const { renewssh, renewvmess, renewvless, renewtrojan } = require('./modules/renew');
-const { callDeleteAPI } = require('./modules/delete'); 
+const { createssh, createvmess, createvless, createtrojan, createhysteria } = require('./modules/create');
+const { trialssh, trialvmess, trialvless, trialtrojan, trialhysteria } = require('./modules/trial');
+const { renewssh, renewvmess, renewvless, renewtrojan, renewhysteria } = require('./modules/renew');
+const { callDeleteAPI } = require('./modules/delete');
 
 const vars = JSON.parse(fs.readFileSync('./.vars.json', 'utf8'));
 
@@ -2047,7 +2047,7 @@ async function sendMainMenu(ctx) {
     ]);
 
     // ==> PERUBAHAN DIMULAI DI SINI: Ambil data akun aktif pengguna <==
-    const activeCounts = { ssh: 0, vmess: 0, vless: 0, trojan: 0 };
+    const activeCounts = { ssh: 0, vmess: 0, vless: 0, trojan: 0, hysteria: 0 };
     const fixed = await new Promise((res,rej)=>db.all("SELECT lower(protocol) as protocol, COUNT(*) as count FROM created_accounts WHERE created_by_user_id = ? AND is_active = 1 AND expiry_date > datetime('now','localtime') GROUP BY protocol", [userId], (e,r)=>e?rej(e):res(r||[])));
     const payg = await new Promise((res,rej)=>db.all("SELECT lower(protocol) as protocol, COUNT(*) as count FROM payg_sessions WHERE user_id = ? AND is_active = 1 GROUP BY protocol", [userId], (e,r)=>e?rej(e):res(r||[])));
     
@@ -2058,7 +2058,8 @@ async function sendMainMenu(ctx) {
 <blockquote><b>💡 AKUN AKTIF ANDA</b></blockquote><code> SSH   : ${activeCounts.ssh} Akun
  VMESS : ${activeCounts.vmess} Akun
  VLESS : ${activeCounts.vless} Akun
- TROJAN: ${activeCounts.trojan} Akun</code>`;
+ TROJAN: ${activeCounts.trojan} Akun
+ HYSTERIA: ${activeCounts.hysteria} Akun</code>`;
     // ==> AKHIR BLOK DATA AKUN AKTIF <==
 
     const rawUsername = ctx.from.username || ctx.from.first_name || `User${userId}`;
@@ -4892,7 +4893,7 @@ bot.action(/server_selected_for_action_(.+)/, async (ctx) => {
 <b>─────────────────────</b>`;
 
         // --- MODIFIKASI TAMPILAN HARGA ---
-        const protocols = ['SSH', 'VMESS', 'VLESS', 'TROJAN'];
+        const protocols = ['SSH', 'VMESS', 'VLESS', 'TROJAN', 'HYSTERIA'];
         protocols.forEach(p => {
             message += `\n<blockquote><b>${p.toUpperCase()}</b></blockquote>`;
             message += `  • Per Jam  : <code>Rp${hargaPerJam.toLocaleString('id-ID')}</code> (PAYG)\n`;
@@ -4908,8 +4909,11 @@ Silakan pilih jenis protokol layanan:`;
         const keyboard = [
             [{ text: 'SSH', callback_data: `protocol_selected_for_action_ssh` }, { text: 'VMESS', callback_data: `protocol_selected_for_action_vmess` }],
             [{ text: 'VLESS', callback_data: `protocol_selected_for_action_vless` }, { text: 'TROJAN', callback_data: `protocol_selected_for_action_trojan` }],
-            [{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]
-        ];
+            // ==> TAMBAHKAN BARIS INI <==
+    [{ text: 'HYSTERIA 2', callback_data: `protocol_selected_for_action_hysteria` }], 
+    // ===========================
+    [{ text: '🔙 Kembali Pilih Server', callback_data: 'panel_server_start' }]
+];
 
         await ctx.editMessageText(message, { 
             parse_mode: 'HTML', 
@@ -4926,7 +4930,7 @@ Silakan pilih jenis protokol layanan:`;
 });
 
 // GANTI handler lama Anda dengan yang ini
-bot.action(/protocol_selected_for_action_(ssh|vmess|vless|trojan)/, async (ctx) => {
+bot.action(/protocol_selected_for_action_(ssh|vmess|vless|trojan|hysteria)/, async (ctx) => {
     const protocol = ctx.match[1];
     const userId = ctx.from.id;
 
@@ -5072,7 +5076,13 @@ async function processFinalPaygCreation(ctx) {
 
         const longExpiryDays = 3650; // Masa aktif "dummy" yang sangat panjang
         let accountDetailsMsg;
-        const createFn = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan }[type];
+        const createFn = { 
+    ssh: createssh, 
+    vmess: createvmess, 
+    vless: createvless, 
+    trojan: createtrojan,
+    hysteria: createhysteria // <--- TAMBAHAN
+}[type];
         
         // =======================================================
         // ==> INI BAGIAN PENTINGNYA <==
@@ -5360,18 +5370,23 @@ Silakan pilih jenis layanan trial:
     `;
 
     const keyboard = [
-      [
-        { text: 'SSH', callback_data: `trial_ssh_${serverId}` },
-        { text: 'VMESS', callback_data: `trial_vmess_${serverId}` }
-      ],
-      [
-        { text: 'VLESS', callback_data: `trial_vless_${serverId}` },
-        { text: 'TROJAN', callback_data: `trial_trojan_${serverId}` }
-      ],
-      [
-        { text: '🔙 Kembali ke Server', callback_data: 'service_trial' }
-      ]
-    ];
+  [
+    { text: 'SSH', callback_data: `trial_ssh_${serverId}` },
+    { text: 'VMESS', callback_data: `trial_vmess_${serverId}` }
+  ],
+  [
+    { text: 'VLESS', callback_data: `trial_vless_${serverId}` },
+    { text: 'TROJAN', callback_data: `trial_trojan_${serverId}` }
+  ],
+  // ==> TAMBAHAN <==
+  [
+    { text: 'HYSTERIA 2', callback_data: `trial_hysteria_${serverId}` }
+  ],
+  // ================
+  [
+    { text: '🔙 Kembali ke Server', callback_data: 'service_trial' }
+  ]
+];
 
     await ctx.editMessageText(message, {
       parse_mode: 'HTML',
@@ -5474,6 +5489,23 @@ bot.action('renew_ssh', async (ctx) => {
     return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'ssh');
+});
+
+// --- TAMBAHAN HANDLER HYSTERIA ---
+
+bot.action('create_hysteria', async (ctx) => {
+  if (!ctx || !ctx.match) return ctx.reply('🚫 Error.');
+  await startSelectServer(ctx, 'create', 'hysteria');
+});
+
+bot.action('renew_hysteria', async (ctx) => {
+  if (!ctx || !ctx.match) return ctx.reply('🚫 Error.');
+  await startSelectServer(ctx, 'renew', 'hysteria');
+});
+
+bot.action('trial_hysteria', async (ctx) => {
+  if (!ctx || !ctx.match) return ctx.reply('🚫 Error.');
+  await startSelectServer(ctx, 'trial', 'hysteria');
 });
 
 async function startSelectServer(ctx, action, page = 0) {
@@ -5697,7 +5729,7 @@ bot.action(/(create|trial)_server_(.+)/, async (ctx) => {
   }
 });
 
-bot.action(/(create|trial)_(ssh|vmess|vless|trojan)_(.+)/, async (ctx) => {
+bot.action(/(create|trial)_(ssh|vmess|vless|trojan|hysteria)_(.+)/, async (ctx) => {
   const action = ctx.match[1];
   const type = ctx.match[2];
   const serverId = ctx.match[3];
@@ -5995,7 +6027,7 @@ async function processTrial(ctx, type, serverId) {
     }
 
     let msg;
-    const trialFunctions = { ssh: trialssh, vmess: trialvmess, vless: trialvless, trojan: trialtrojan };
+    const trialFunctions = { ssh: trialssh, vmess: trialvmess, vless: trialvless, trojan: trialtrojan, hysteria: trialhysteria };
     if (!trialFunctions[type]) throw new Error(`Tipe trial tidak dikenali: ${type}`);
     msg = await trialFunctions[type](serverId);
 
@@ -6403,7 +6435,14 @@ Silakan scan QRIS untuk top up.`;
 
             // Panggil fungsi create akun di panel (createssh, createvmess, dll.)
             let panelCreationResponse;
-            const createFunctions = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan };
+            // TAMBAHKAN hysteria: createhysteria DI SINI
+            const createFunctions = { 
+                ssh: createssh, 
+                vmess: createvmess, 
+                vless: createvless, 
+                trojan: createtrojan,
+                hysteria: createhysteria 
+            };
 
             if (!createFunctions[type]) {
                 throw new Error("Tipe layanan tidak valid untuk pembuatan akun.");
@@ -6680,7 +6719,13 @@ Silakan scan QRIS untuk top up.`;
             }
 
             // Panggil fungsi renew akun di panel
-            const renewFunctions = { ssh: renewssh, vmess: renewvmess, vless: renewvless, trojan: renewtrojan };
+            const renewFunctions = { 
+    ssh: renewssh, 
+    vmess: renewvmess, 
+    vless: renewvless, 
+    trojan: renewtrojan,
+    hysteria: renewhysteria // <--- TAMBAHAN
+};
             if (!renewFunctions[type]) throw new Error("Tipe layanan tidak valid untuk perpanjangan.");
 
             const panelRenewResponse = (type === 'ssh')
@@ -9367,7 +9412,13 @@ app.post('/api/create-account', isAuthenticated, async (req, res) => {
                 return res.status(400).json({ success: false, message: `Saldo tidak cukup untuk PAYG. Dibutuhkan min. Rp${(hourlyRate + PAYG_MINIMUM_BALANCE_THRESHOLD).toLocaleString('id-ID')}.` });
             }
 
-            const createFn = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan }[protocol];
+            const createFn = { 
+    ssh: createssh, 
+    vmess: createvmess, 
+    vless: createvless, 
+    trojan: createtrojan,
+    hysteria: createhysteria // <--- TAMBAHAN
+}[protocol];
             const resultMessage = (protocol === 'ssh')
                 ? await createFn(username, password, 3650, server.iplimit, serverId, true) // Expiry panjang, isPayg = true
                 : await createFn(username, 3650, server.quota, server.iplimit, serverId, true);
@@ -9400,7 +9451,13 @@ app.post('/api/create-account', isAuthenticated, async (req, res) => {
                 return res.status(400).json({ success: false, message: `Saldo tidak cukup. Dibutuhkan Rp${totalHarga.toLocaleString('id-ID')}.` });
             }
 
-            const createFn = { ssh: createssh, vmess: createvmess, vless: createvless, trojan: createtrojan }[protocol];
+            const createFn = { 
+    ssh: createssh, 
+    vmess: createvmess, 
+    vless: createvless, 
+    trojan: createtrojan,
+    hysteria: createhysteria // <--- TAMBAHAN
+}[protocol];
             const resultMessage = (protocol === 'ssh')
                 ? await createFn(username, password, expDays, server.iplimit, serverId)
                 : await createFn(username, expDays, server.quota, server.iplimit, serverId);
