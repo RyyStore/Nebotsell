@@ -8651,7 +8651,7 @@ topUpQueue.process(async (job) => {
 
         try {
     const response = await axios.post(
-        `https://api.xlsmart.biz.id/payment/qris/${vars.OKE_API_BASE}`, // Akan membaca "OK2285905"
+        `https://qris.payment.web.id/payment/qris/${vars.OKE_API_BASE}`, // Akan membaca "OK2285905"
         {
             "username": vars.ORKUT_USERNAME, // Akan membaca "rkptr"
             "token": vars.ORKUT_TOKEN        // Akan membaca "2285905:dSCEsi..."
