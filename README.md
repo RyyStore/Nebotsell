@@ -11,6 +11,10 @@
 
 ### INSTALL QUEUE
 <pre><code>wget -q https://raw.githubusercontent.com/RyyStore/Nebotsell/main/install-queue.sh -O install-queue.sh && chmod +x install-queue.sh && ./install-queue.sh</code></pre>
+<pre><code>apt-get update
+apt-get install redis-server -y
+systemctl enable redis-server
+systemctl start redis-server</code></pre>
 
 <pre><code>npm install bull
 npm install -g bull</code></pre>
