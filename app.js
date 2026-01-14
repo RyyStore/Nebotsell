@@ -1,4 +1,5 @@
 // BAGIAN 1: SEMUA REQUIRE DI ATAS
+const qrcode = require('qrcode');
 const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
@@ -7415,29 +7416,30 @@ async function getUserIdFromTelegram(userId) {
 }
 
 async function generateDynamicQris(amount, staticQrisString) {
-    const apiUrl = 'https://qrisku.my.id/api'; // Endpoint API Anda
-    try {
-        console.log(`[QRIS_GEN] Meminta QRIS untuk jumlah: ${amount}`);
-        const response = await axios.post(apiUrl, {
-            amount: amount.toString(), // API mengharapkan string
-            qris_statis: staticQrisString
-        }, { timeout: 15000 }); // Timeout 15 detik
+    // Membaca data dari vars yang sudah diisi otomatis oleh script bash
+    const merchantCode = vars.FT_MERCHANT_CODE; 
+    const apiHash = vars.FT_HASH;
+    const apiUrl = `https://pay.ftstoresz.app/create_payment?merchant=${merchantCode}&hash=${apiHash}&amount=${amount}`;
 
-        if (response.data && response.data.status === 'success' && response.data.qris_base64) {
-            console.log('[QRIS_GEN] Berhasil menghasilkan QRIS base64.');
-            return response.data.qris_base64;
+    try {
+        console.log(`[QRIS_GEN] Membuat QRIS FTStores untuk Rp ${amount}`);
+        const response = await axios.get(apiUrl, { timeout: 15000 });
+
+        if (response.data && response.data.success === true) {
+            const qrString = response.data.results.qr_string;
+            
+            // Gunakan library qrcode untuk membuat gambar
+            const base64Image = await qrcode.toDataURL(qrString);
+            
+            console.log('[QRIS_GEN] Berhasil membuat QRIS.');
+            return base64Image.split(',')[1]; 
         } else {
-            console.error('[QRIS_GEN] Gagal menghasilkan QRIS. Respons API:', response.data);
-            const apiMessage = response.data && response.data.message ? response.data.message : 'Gagal menghasilkan QRIS dari API.';
-            throw new Error(apiMessage);
+            console.error('[QRIS_GEN] Gagal:', response.data.message);
+            throw new Error(response.data.message || 'Gagal generate QRIS');
         }
     } catch (error) {
-        console.error(`[QRIS_GEN] Error memanggil API QRIS: ${error.message}`);
-        if (error.response) {
-            console.error('[QRIS_GEN] Data Respons Error API:', error.response.data);
-            console.error('[QRIS_GEN] Status Respons Error API:', error.response.status);
-        }
-        throw new Error(error.message || 'Gagal menghubungi layanan pembuat QRIS.');
+        console.error(`[QRIS_GEN] Error: ${error.message}`);
+        throw new Error('Gagal menghubungi Merchant API.');
     }
 }
 
@@ -8649,10 +8651,10 @@ topUpQueue.process(async (job) => {
 
         try {
     const response = await axios.post(
-        `https://qris.payment.web.id/payment/qris/${vars.OKE_API_BASE}`,
+        `https://api.xlsmart.biz.id/payment/qris/${vars.OKE_API_BASE}`, // Akan membaca "OK2285905"
         {
-            "username": vars.ORKUT_USERNAME,
-            "token": vars.ORKUT_TOKEN
+            "username": vars.ORKUT_USERNAME, // Akan membaca "rkptr"
+            "token": vars.ORKUT_TOKEN        // Akan membaca "2285905:dSCEsi..."
         },
         {
             headers: {
@@ -8660,10 +8662,9 @@ topUpQueue.process(async (job) => {
                 'User-Agent': 'curl/7.6.80'
             },
             timeout: 25000,
-            // --- PERUBAHAN UTAMA ADA DI SINI ---
             httpsAgent: new https.Agent({
                 rejectUnauthorized: false,
-                ciphers: 'DEFAULT:@SECLEVEL=1' // Menggunakan cipher yang lebih kompatibel
+                ciphers: 'DEFAULT:@SECLEVEL=1'
             })
         }
     );

